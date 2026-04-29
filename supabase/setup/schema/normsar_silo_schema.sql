@@ -1180,3 +1180,21 @@ VALUES (
     'Normsar',
     'https://cdn.normsar.io/official/ai.png'
 ) ON CONFLICT (id) DO UPDATE SET avatar_url = EXCLUDED.avatar_url;
+
+-- Cron Tasks
+SELECT cron.schedule(
+  'jobid_3_delete_expired_chat_messages',
+  '*/5 * * * *',
+  $$
+  DELETE FROM public.chat_messages
+  WHERE expires_at < NOW();
+  $$
+);
+SELECT cron.schedule(
+  'jobid_4_cleanup_silo_activity_logs',
+  '0 2 * * *',
+  $$
+  DELETE FROM public.silo_activity_logs
+  WHERE created_at < (NOW() - INTERVAL '3 months');
+  $$
+);
