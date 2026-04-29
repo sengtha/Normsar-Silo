@@ -791,3 +791,334 @@ ALTER TABLE ONLY public.silo_activity_logs
 
 ALTER TABLE ONLY public.user_dismissals
     ADD CONSTRAINT user_dismissals_pkey PRIMARY KEY (user_id, item_id, item_type);
+
+--
+-- Row Level Security (RLS) Policies
+--
+
+-- Enable RLS on all tables
+ALTER TABLE public.chat_messages ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.chat_rooms ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.profiles ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.room_participants ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.message_reactions ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.doc_segments ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.shared_content ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.governance_proposals ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.proposal_votes ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.room_keys ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.ai_briefing_logs ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.silo_activity_logs ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.user_dismissals ENABLE ROW LEVEL SECURITY;
+
+--
+-- Profiles RLS Policies
+--
+
+CREATE POLICY "Public profiles are viewable by everyone" ON public.profiles
+    FOR SELECT
+    USING (true);
+
+CREATE POLICY "Users can update their own profile" ON public.profiles
+    FOR UPDATE
+    USING (auth.uid() = id)
+    WITH CHECK (auth.uid() = id);
+
+--
+-- Chat Rooms RLS Policies
+--
+
+CREATE POLICY "Users can view rooms they are a participant of" ON public.chat_rooms
+    FOR SELECT
+    USING (
+        is_public = true
+        OR EXISTS (
+            SELECT 1 FROM public.room_participants
+            WHERE room_participants.room_id = chat_rooms.id
+            AND room_participants.user_id = auth.uid()
+            AND room_participants.status = 'active'
+        )
+    );
+
+CREATE POLICY "Room creators can create rooms" ON public.chat_rooms
+    FOR INSERT
+    WITH CHECK (auth.uid() IS NOT NULL);
+
+CREATE POLICY "Room admins can update their rooms" ON public.chat_rooms
+    FOR UPDATE
+    USING (
+        created_by = auth.uid()
+        OR EXISTS (
+            SELECT 1 FROM public.room_participants
+            WHERE room_participants.room_id = chat_rooms.id
+            AND room_participants.user_id = auth.uid()
+            AND room_participants.role = 'admin'
+        )
+    );
+
+--
+-- Chat Messages RLS Policies
+--
+
+CREATE POLICY "Users can view messages in rooms they belong to" ON public.chat_messages
+    FOR SELECT
+    USING (
+        EXISTS (
+            SELECT 1 FROM public.room_participants
+            WHERE room_participants.room_id = chat_messages.room_id
+            AND room_participants.user_id = auth.uid()
+            AND room_participants.status = 'active'
+        )
+    );
+
+CREATE POLICY "Users can insert messages in rooms they belong to" ON public.chat_messages
+    FOR INSERT
+    WITH CHECK (
+        auth.uid() = user_id
+        AND EXISTS (
+            SELECT 1 FROM public.room_participants
+            WHERE room_participants.room_id = chat_messages.room_id
+            AND room_participants.user_id = auth.uid()
+            AND room_participants.status = 'active'
+        )
+    );
+
+CREATE POLICY "Users can update their own messages" ON public.chat_messages
+    FOR UPDATE
+    USING (auth.uid() = user_id);
+
+CREATE POLICY "Users can delete their own messages" ON public.chat_messages
+    FOR DELETE
+    USING (auth.uid() = user_id);
+
+--
+-- Room Participants RLS Policies
+--
+
+CREATE POLICY "Users can view participants in rooms they belong to" ON public.room_participants
+    FOR SELECT
+    USING (
+        EXISTS (
+            SELECT 1 FROM public.room_participants rp2
+            WHERE rp2.room_id = room_participants.room_id
+            AND rp2.user_id = auth.uid()
+            AND rp2.status = 'active'
+        )
+    );
+
+CREATE POLICY "Room admins can manage participants" ON public.room_participants
+    FOR UPDATE
+    USING (
+        EXISTS (
+            SELECT 1 FROM public.room_participants rp
+            WHERE rp.room_id = room_participants.room_id
+            AND rp.user_id = auth.uid()
+            AND rp.role = 'admin'
+        )
+    );
+
+CREATE POLICY "Users can leave rooms" ON public.room_participants
+    FOR DELETE
+    USING (auth.uid() = user_id);
+
+--
+-- Message Reactions RLS Policies
+--
+
+CREATE POLICY "Users can view reactions in accessible messages" ON public.message_reactions
+    FOR SELECT
+    USING (
+        EXISTS (
+            SELECT 1 FROM public.chat_messages m
+            WHERE m.id = message_reactions.message_id
+            AND EXISTS (
+                SELECT 1 FROM public.room_participants
+                WHERE room_participants.room_id = m.room_id
+                AND room_participants.user_id = auth.uid()
+                AND room_participants.status = 'active'
+            )
+        )
+    );
+
+CREATE POLICY "Users can add reactions to messages" ON public.message_reactions
+    FOR INSERT
+    WITH CHECK (
+        auth.uid() = user_id
+        AND EXISTS (
+            SELECT 1 FROM public.chat_messages m
+            WHERE m.id = message_reactions.message_id
+            AND EXISTS (
+                SELECT 1 FROM public.room_participants
+                WHERE room_participants.room_id = m.room_id
+                AND room_participants.user_id = auth.uid()
+                AND room_participants.status = 'active'
+            )
+        )
+    );
+
+CREATE POLICY "Users can remove their own reactions" ON public.message_reactions
+    FOR DELETE
+    USING (auth.uid() = user_id);
+
+--
+-- Doc Segments RLS Policies
+--
+
+CREATE POLICY "Users can view doc segments in their rooms" ON public.doc_segments
+    FOR SELECT
+    USING (
+        EXISTS (
+            SELECT 1 FROM public.room_participants
+            WHERE room_participants.room_id = doc_segments.room_id
+            AND room_participants.user_id = auth.uid()
+            AND room_participants.status = 'active'
+        )
+    );
+
+CREATE POLICY "Users can insert doc segments in their rooms" ON public.doc_segments
+    FOR INSERT
+    WITH CHECK (
+        EXISTS (
+            SELECT 1 FROM public.room_participants
+            WHERE room_participants.room_id = doc_segments.room_id
+            AND room_participants.user_id = auth.uid()
+            AND room_participants.status = 'active'
+        )
+    );
+
+--
+-- Governance Proposals RLS Policies
+--
+
+CREATE POLICY "Users can view proposals in their rooms" ON public.governance_proposals
+    FOR SELECT
+    USING (
+        EXISTS (
+            SELECT 1 FROM public.room_participants
+            WHERE room_participants.room_id = governance_proposals.room_id
+            AND room_participants.user_id = auth.uid()
+            AND room_participants.status = 'active'
+        )
+    );
+
+CREATE POLICY "Users can create proposals in their rooms" ON public.governance_proposals
+    FOR INSERT
+    WITH CHECK (
+        auth.uid() = proposed_by
+        AND EXISTS (
+            SELECT 1 FROM public.room_participants
+            WHERE room_participants.room_id = governance_proposals.room_id
+            AND room_participants.user_id = auth.uid()
+            AND room_participants.status = 'active'
+        )
+    );
+
+--
+-- Proposal Votes RLS Policies
+--
+
+CREATE POLICY "Users can view votes on proposals in their rooms" ON public.proposal_votes
+    FOR SELECT
+    USING (
+        EXISTS (
+            SELECT 1 FROM public.governance_proposals gp
+            WHERE gp.id = proposal_votes.proposal_id
+            AND EXISTS (
+                SELECT 1 FROM public.room_participants
+                WHERE room_participants.room_id = gp.room_id
+                AND room_participants.user_id = auth.uid()
+                AND room_participants.status = 'active'
+            )
+        )
+    );
+
+CREATE POLICY "Users can vote on proposals in their rooms" ON public.proposal_votes
+    FOR INSERT
+    WITH CHECK (
+        auth.uid() = user_id
+        AND EXISTS (
+            SELECT 1 FROM public.governance_proposals gp
+            WHERE gp.id = proposal_votes.proposal_id
+            AND EXISTS (
+                SELECT 1 FROM public.room_participants
+                WHERE room_participants.room_id = gp.room_id
+                AND room_participants.user_id = auth.uid()
+                AND room_participants.status = 'active'
+            )
+        )
+    );
+
+--
+-- AI Briefing Logs RLS Policies
+--
+
+CREATE POLICY "Users can view their own briefing logs" ON public.ai_briefing_logs
+    FOR SELECT
+    USING (auth.uid() = user_id);
+
+CREATE POLICY "Users can create their own briefing logs" ON public.ai_briefing_logs
+    FOR INSERT
+    WITH CHECK (auth.uid() = user_id);
+
+--
+-- Silo Activity Logs RLS Policies
+--
+
+CREATE POLICY "Users can view their own activity logs" ON public.silo_activity_logs
+    FOR SELECT
+    USING (auth.uid() = user_id);
+
+CREATE POLICY "Users can create their own activity logs" ON public.silo_activity_logs
+    FOR INSERT
+    WITH CHECK (auth.uid() = user_id);
+
+--
+-- User Dismissals RLS Policies
+--
+
+CREATE POLICY "Users can view their own dismissals" ON public.user_dismissals
+    FOR SELECT
+    USING (auth.uid() = user_id);
+
+CREATE POLICY "Users can manage their own dismissals" ON public.user_dismissals
+    FOR INSERT
+    WITH CHECK (auth.uid() = user_id);
+
+CREATE POLICY "Users can delete their own dismissals" ON public.user_dismissals
+    FOR DELETE
+    USING (auth.uid() = user_id);
+
+--
+-- Shared Content RLS Policies
+--
+
+CREATE POLICY "Users can view shared content from accessible messages" ON public.shared_content
+    FOR SELECT
+    USING (
+        EXISTS (
+            SELECT 1 FROM public.chat_messages m
+            WHERE m.id = shared_content.original_message_id
+            AND EXISTS (
+                SELECT 1 FROM public.room_participants
+                WHERE room_participants.room_id = m.room_id
+                AND room_participants.user_id = auth.uid()
+                AND room_participants.status = 'active'
+            )
+        )
+    );
+
+CREATE POLICY "Users can share messages from their rooms" ON public.shared_content
+    FOR INSERT
+    WITH CHECK (
+        auth.uid() = shared_by_user_id
+        AND EXISTS (
+            SELECT 1 FROM public.chat_messages m
+            WHERE m.id = shared_content.original_message_id
+            AND EXISTS (
+                SELECT 1 FROM public.room_participants
+                WHERE room_participants.room_id = m.room_id
+                AND room_participants.user_id = auth.uid()
+                AND room_participants.status = 'active'
+            )
+        )
+    );
