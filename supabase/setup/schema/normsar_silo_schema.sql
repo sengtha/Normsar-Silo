@@ -141,17 +141,6 @@ CREATE TABLE public.profiles (
     CONSTRAINT profiles_username_len_check CHECK (((username IS NULL) OR ((char_length(username) >= 1) AND (char_length(username) <= 30))))
 );
 
--- Insert Normsar AI System Profile
--- Essential for system-level notifications and AI interactions.
-INSERT INTO public.profiles (id, username, full_name, display_name, avatar_url)
-VALUES (
-    '00000000-0000-0000-0000-000000000000', 
-    'normsar', 
-    'Normsar AI', 
-    'Normsar',
-    'https://cdn.normsar.io/official/ai.png'
-) ON CONFLICT (id) DO UPDATE SET avatar_url = EXCLUDED.avatar_url;
-
 CREATE TABLE public.proposal_votes (
     proposal_id uuid NOT NULL,
     user_id uuid NOT NULL,
@@ -1181,3 +1170,13 @@ ON public.shared_content(target_room_id);
 CREATE INDEX IF NOT EXISTS idx_shared_content_shared_by 
 ON public.shared_content(shared_by_user_id);
 
+-- Insert Normsar AI System Profile
+-- Essential for system-level notifications and AI interactions.
+INSERT INTO public.profiles (id, username, full_name, display_name, avatar_url)
+VALUES (
+    '00000000-0000-0000-0000-000000000000', 
+    'normsar', 
+    'Normsar AI', 
+    'Normsar',
+    'https://cdn.normsar.io/official/ai.png'
+) ON CONFLICT (id) DO UPDATE SET avatar_url = EXCLUDED.avatar_url;
