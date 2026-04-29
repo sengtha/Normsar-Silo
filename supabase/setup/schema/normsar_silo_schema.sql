@@ -861,6 +861,19 @@ $$;
 --
 -- Public Functions
 --
+CREATE FUNCTION public.is_room_admin_or_mod(_room_id uuid) RETURNS boolean
+    LANGUAGE sql STABLE SECURITY DEFINER
+    SET search_path TO 'public'
+    AS $$
+  SELECT EXISTS (
+    SELECT 1
+    FROM public.room_participants rp
+    WHERE rp.room_id = _room_id
+      AND rp.user_id = auth.uid()
+      AND rp.status = 'active'
+      AND rp.role IN ('admin', 'moderator')
+  );
+$$;
 
 CREATE FUNCTION public._is_admin_or_moderator_of_room(p_room_id uuid) RETURNS boolean
     LANGUAGE sql STABLE
@@ -1050,22 +1063,6 @@ BEGIN
   RETURN NEW;
 END;
 $$;
-
-
-CREATE FUNCTION public.is_room_admin_or_mod(_room_id uuid) RETURNS boolean
-    LANGUAGE sql STABLE SECURITY DEFINER
-    SET search_path TO 'public'
-    AS $$
-  SELECT EXISTS (
-    SELECT 1
-    FROM public.room_participants rp
-    WHERE rp.room_id = _room_id
-      AND rp.user_id = auth.uid()
-      AND rp.status = 'active'
-      AND rp.role IN ('admin', 'moderator')
-  );
-$$;
-
 
 CREATE FUNCTION public.is_room_member(_room_id uuid) RETURNS boolean
     LANGUAGE sql STABLE SECURITY DEFINER
