@@ -10,7 +10,7 @@ Follow these steps to deploy and register your own sovereign messaging node.
 ### 1. Configure Edge Function Secrets
 You must set a JWT secret to secure communication between your Silo and the Normsar network.
 1. Go to your **Supabase Dashboard**.
-2. Navigate to **Project Settings** -> **API**.
+2. Navigate to **Project Settings** -> **JWT Key**.
 3. Under the **JWT Settings** section, copy the **JWT Secret** (Legacy JWT secret).
 4. Go to **Edge Functions** -> **Manage Secrets** in the sidebar.
 5. Click **Add New Secret**:
