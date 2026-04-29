@@ -44,7 +44,7 @@ This is a crucial step! CORS (Cross-Origin Resource Sharing) tells Cloudflare th
 [
   {
     "AllowedOrigins": [
-      "[https://normsar.io](https://normsar.io)"
+      "https://normsar.io"
     ],
     "AllowedMethods": [
       "PUT",
