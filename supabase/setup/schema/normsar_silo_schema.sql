@@ -31,543 +31,6 @@ CREATE SCHEMA IF NOT EXISTS private;
 CREATE SCHEMA IF NOT EXISTS extensions;
 
 --
--- Private Functions
---
-
-CREATE FUNCTION private.auto_execute_creator_transfer() RETURNS trigger
-    LANGUAGE plpgsql SECURITY DEFINER
-    SET search_path TO 'private', 'pg_temp'
-    AS $$
-DECLARE
-    v_room_id UUID;
-    v_nominee_id UUID;
-    v_old_owner_id UUID;
-    v_active_members INT;
-    v_required_votes INT;
-    v_current_yes_votes INT;
-BEGIN
-    SET LOCAL row_security = off;
-
-    IF NEW.vote = 'yes' THEN
-        SELECT p.room_id, p.nominee_user_id
-        INTO v_room_id, v_nominee_id
-        FROM public.governance_proposals p
-        WHERE p.id = NEW.proposal_id AND p.status = 'pending';
-
-        IF v_room_id IS NOT NULL THEN
-            SELECT count(*)
-            INTO v_active_members
-            FROM public.room_participants rp
-            WHERE rp.room_id = v_room_id AND rp.status = 'active';
-
-            v_required_votes := LEAST(CEIL(v_active_members * 0.51), 10);
-
-            SELECT count(*)
-            INTO v_current_yes_votes
-            FROM public.proposal_votes pv
-            WHERE pv.proposal_id = NEW.proposal_id AND pv.vote = 'yes';
-
-            IF v_current_yes_votes >= v_required_votes THEN
-                SELECT r.created_by
-                INTO v_old_owner_id
-                FROM public.chat_rooms r
-                WHERE r.id = v_room_id;
-
-                UPDATE public.chat_rooms
-                SET created_by = v_nominee_id
-                WHERE id = v_room_id;
-
-                UPDATE public.room_participants
-                SET role = 'member'
-                WHERE room_id = v_room_id AND user_id = v_old_owner_id;
-
-                UPDATE public.room_participants
-                SET role = 'admin'
-                WHERE room_id = v_room_id AND user_id = v_nominee_id;
-
-                UPDATE public.governance_proposals
-                SET status = 'executed'
-                WHERE id = NEW.proposal_id;
-            END IF;
-        END IF;
-    END IF;
-
-    RETURN NEW;
-END;
-$$;
-
-
-CREATE FUNCTION private.auto_toggle_dm_to_group() RETURNS trigger
-    LANGUAGE plpgsql SECURITY DEFINER
-    AS $$
-DECLARE
-  v_active_count INT;
-  v_allow_join BOOLEAN;
-  v_is_vault BOOLEAN;
-  v_room_name TEXT;
-  v_room_id UUID;
-BEGIN
-  -- Determine the affected room_id based on the database action
-  IF TG_OP = 'DELETE' THEN
-    v_room_id := OLD.room_id;
-  ELSE
-    v_room_id := NEW.room_id;
-  END IF;
-
-  -- Fetch room settings, including the room name
-  SELECT allow_join_requests, COALESCE(is_personal_vault, false), name
-  INTO v_allow_join, v_is_vault, v_room_name
-  FROM public.chat_rooms
-  WHERE id = v_room_id;
-
-  -- Ensure we never touch personal vaults
-  IF v_is_vault = FALSE THEN
-
-    -- Count how many 'active' members currently exist
-    SELECT count(*) INTO v_active_count
-    FROM public.room_participants
-    WHERE room_id = v_room_id AND status = 'active';
-
-    -- RULE 1: Upgrade to Group
-    -- If an unnamed DM gets a 3rd person, it becomes a group.
-    IF v_active_count > 2 THEN
-      UPDATE public.chat_rooms SET is_direct_message = false WHERE id = v_room_id;
-    END IF;
-
-    -- RULE 2: Downgrade to DM (The Fix)
-    -- ONLY downgrade to a DM if the active count is 2 AND the room does not have a custom name.
-    -- This protects your named community rooms from vanishing if members leave or haven't joined yet.
-    IF v_active_count <= 2 AND v_room_name IS NULL THEN
-      UPDATE public.chat_rooms SET is_direct_message = true WHERE id = v_room_id;
-    END IF;
-
-  END IF;
-
-  RETURN NULL;
-END;
-$$;
-
-
-CREATE FUNCTION private.delete_chat_message_attachments() RETURNS trigger
-    LANGUAGE plpgsql SECURITY DEFINER
-    AS $$
-DECLARE
-  v_elem jsonb;
-  v_path text;
-BEGIN
-  -- attachments is expected to be a JSON array
-  IF OLD.attachments IS NULL OR OLD.attachments = '[]'::jsonb THEN
-    RETURN OLD;
-  END IF;
-
-  FOR v_elem IN
-    SELECT value
-    FROM jsonb_array_elements(OLD.attachments) AS t(value)
-  LOOP
-    v_path := NULL;
-
-    IF jsonb_typeof(v_elem) = 'string' THEN
-      v_path := v_elem #>> '{}';
-    ELSIF jsonb_typeof(v_elem) = 'object' THEN
-      -- Support a few common shapes
-      v_path := COALESCE(
-        v_elem->>'path',
-        v_elem->>'file_path',
-        v_elem->>'storage_path',
-        v_elem->>'object',
-        v_elem->>'name'
-      );
-    END IF;
-
-    v_path := NULLIF(BTRIM(v_path), '');
-
-    IF v_path IS NOT NULL THEN
-      -- Bucket used by this project
-      DELETE FROM storage.objects
-      WHERE bucket_id = 'silo_uploads'
-        AND name = v_path;
-    END IF;
-  END LOOP;
-
-  RETURN OLD;
-END;
-$$;
-
-
-CREATE FUNCTION private.enforce_room_participant_update() RETURNS trigger
-    LANGUAGE plpgsql SECURITY DEFINER
-    SET search_path TO 'pg_catalog', 'public', 'auth'
-    AS $$
-begin
-  -- If the user is an admin in this room, allow all updates.
-  if exists (
-    select 1 from public.room_participants rp
-    where rp.room_id = NEW.room_id
-      and rp.user_id = auth.uid()
-      and rp.role = 'admin'
-  ) then
-    return NEW;
-  end if;
-
-  -- If the user is a moderator in this room, they may update status/title/role.
-  -- They cannot change who the participant is (user_id) or move it to another room.
-  if exists (
-    select 1 from public.room_participants rp
-    where rp.room_id = NEW.room_id
-      and rp.user_id = auth.uid()
-      and rp.role = 'moderator'
-  ) then
-    if (NEW.user_id <> OLD.user_id) or (NEW.room_id <> OLD.room_id) then
-      raise exception 'Moderators may not change participant identity or room';
-    end if;
-
-    -- Allow role changes (e.g., setting someone to admin), as long as the value is valid
-    -- (enforced by existing CHECK constraint).
-    if (NEW.joined_at <> OLD.joined_at) then
-      raise exception 'Moderators may not modify joined_at';
-    end if;
-
-    return NEW;
-  end if;
-
-  raise exception 'Not authorized to update room participants';
-end;
-$$;
-
-
-CREATE FUNCTION private.handle_new_room_admin() RETURNS trigger
-    LANGUAGE plpgsql SECURITY DEFINER
-    SET search_path TO 'pg_catalog', 'public'
-    AS $$
-BEGIN
-  -- We only insert if there is an authenticated user making the request
-  IF auth.uid() IS NOT NULL THEN
-    INSERT INTO public.room_participants (room_id, user_id, role, status)
-    VALUES (NEW.id, auth.uid(), 'admin', 'active');
-  END IF;
-
-  RETURN NEW;
-END;
-$$;
-
-
-CREATE FUNCTION private.is_room_participant_admin_or_moderator(p_room_id uuid, p_user_id uuid) RETURNS boolean
-    LANGUAGE sql STABLE SECURITY DEFINER
-    SET search_path TO 'public', 'pg_temp'
-    AS $$
-  select exists (
-    select 1
-    from public.room_participants rp
-    where rp.room_id = p_room_id
-      and rp.user_id = p_user_id
-      and rp.role::text in ('admin','moderator')
-  );
-$$;
-
-
-CREATE FUNCTION private.log_silo_activity() RETURNS trigger
-    LANGUAGE plpgsql SECURITY DEFINER
-    SET search_path TO 'pg_catalog', 'public'
-    AS $$
-DECLARE
-  fetched_room_name TEXT;
-BEGIN
-  -- 1. Fetch the actual text name of the room using the ID from the new message
-  SELECT name INTO fetched_room_name
-  FROM public.chat_rooms
-  WHERE id = NEW.room_id;
-
-  -- 2. Insert the human-readable record into the log
-  INSERT INTO public.silo_activity_logs (
-    user_id,
-    action_type,
-    location_name
-  )
-  VALUES (
-    NEW.user_id,
-    TG_ARGV[0], -- Action type (e.g., 'Sent Message')
-    COALESCE(fetched_room_name, 'General')
-  );
-
-  RETURN NEW;
-END;
-$$;
-
-
-CREATE FUNCTION private.prevent_downgrading_security() RETURNS trigger
-    LANGUAGE plpgsql SECURITY DEFINER
-    AS $$
-BEGIN
-  -- Check if attempting to disable a Personal Vault
-  IF OLD.is_personal_vault = true AND NEW.is_personal_vault = false THEN
-    RAISE EXCEPTION 'Security constraint violation: Cannot remove personal vault status from this room.';
-  END IF;
-
-  -- Check if attempting to disable End-to-End Encryption
-  IF OLD.is_e2ee = true AND NEW.is_e2ee = false THEN
-    RAISE EXCEPTION 'Security constraint violation: Cannot disable End-to-End Encryption once enabled.';
-  END IF;
-
-  -- If neither rule is broken, allow the update to proceed
-  RETURN NEW;
-END;
-$$;
-
---
--- Public Functions
---
-
-CREATE FUNCTION public._is_admin_or_moderator_of_room(p_room_id uuid) RETURNS boolean
-    LANGUAGE sql STABLE
-    AS $$
-  SELECT public.is_room_admin_or_mod(p_room_id);
-$$;
-
-
-CREATE FUNCTION public.get_shared_message(p_share_id uuid) RETURNS json
-    LANGUAGE plpgsql SECURITY DEFINER
-    AS $$
-DECLARE
-  result JSON;
-BEGIN
-  SELECT json_build_object(
-    'id', m.id,
-    'original_message_id', m.id,
-    'content', m.content,
-    'created_at', m.created_at,
-    'attachments', m.attachments,
-    'author_name', COALESCE(p.display_name, p.full_name, 'Unknown User'),
-    'author_avatar', p.avatar_url,
-    'shared_by', COALESCE(sp.display_name, 'Someone')
-  ) INTO result
-  FROM public.shared_content sc
-  JOIN public.chat_messages m ON sc.original_message_id = m.id
-  LEFT JOIN public.profiles p ON m.user_id = p.id
-  LEFT JOIN public.profiles sp ON sc.shared_by_user_id = sp.id
-  WHERE sc.id = p_share_id
-  AND m.allow_forwarding = true; 
-
-  RETURN result;
-END;
-$$;
-
-
-CREATE FUNCTION public.get_unique_room_tags(p_room_id uuid) RETURNS TABLE(tag text)
-    LANGUAGE plpgsql SECURITY DEFINER
-    AS $$
-BEGIN
-  RETURN QUERY
-  SELECT DISTINCT unnest(tags) AS tag
-  FROM public.chat_messages
-  WHERE room_id = p_room_id 
-    AND tags IS NOT NULL 
-    AND array_length(tags, 1) > 0;
-END;
-$$;
-
-
-CREATE FUNCTION public.get_user_action_inbox(p_user_id uuid) RETURNS json
-    LANGUAGE plpgsql SECURITY DEFINER
-    SET search_path TO 'public', 'pg_temp'
-    AS $$DECLARE
-  result json;
-BEGIN
-  IF auth.uid() IS NULL OR auth.uid() != p_user_id THEN
-    RAISE EXCEPTION 'Unauthorized: You can only query your own inbox.';
-  END IF;
-  -- Build the inbox payload
-  SELECT json_agg(row_to_json(t)) INTO result
-  FROM (
-    SELECT 
-      m.id AS message_id,
-      m.room_id,
-      r.name AS room_name,
-      p.full_name AS author_full_name,
-      p.username AS author_username,
-      p.avatar_url,
-      m.content,
-      m.created_at,
-      CASE 
-        -- Compare the user's UUID against the UUID array
-        WHEN p_user_id = ANY(m.mentioned_users) THEN 'mention'
-        ELSE 'reply'
-      END AS inbox_type
-    FROM public.chat_messages m
-    JOIN public.chat_rooms r ON m.room_id = r.id
-    JOIN public.profiles p ON m.user_id = p.id
-    -- Ensure they are still active in the room
-    JOIN public.room_participants rp 
-      ON m.room_id = rp.room_id
-     AND rp.user_id = p_user_id
-     AND rp.status = 'active'
-    WHERE
-      m.created_at > NOW() - INTERVAL '90 days' 
-      AND m.user_id <> p_user_id
-      AND (
-        -- Match against the new UUID array
-        p_user_id = ANY(m.mentioned_users)
-        OR m.reply_to_message_id IN (
-          SELECT id
-          FROM public.chat_messages
-          WHERE user_id = p_user_id
-        )
-      )
-      -- Exclude encrypted rooms
-      AND COALESCE(r.is_personal_vault, false) = false
-      AND COALESCE(r.is_e2ee, false) = false
-      AND NOT EXISTS (
-        SELECT 1
-        FROM public.user_dismissals ud
-        WHERE ud.user_id = p_user_id
-          AND ud.item_id = m.id 
-          AND ud.item_type IN ('mention', 'reply')
-      )
-    ORDER BY m.created_at DESC
-    LIMIT 50
-  ) t;
-
-  RETURN COALESCE(result, '[]'::json);
-END;$$;
-
-
-CREATE FUNCTION public.get_user_active_todos(p_user_id uuid) RETURNS json
-    LANGUAGE plpgsql SECURITY DEFINER
-    SET search_path TO 'public', 'pg_temp'
-    AS $$DECLARE
-  result json;
-BEGIN
-  IF auth.uid() IS NULL OR auth.uid() != p_user_id THEN
-    RAISE EXCEPTION 'Unauthorized: You can only query your own inbox.';
-  END IF;
-  SELECT json_agg(row_to_json(t)) INTO result
-  FROM (
-    SELECT
-      m.id AS message_id,
-      m.room_id,
-      r.name AS room_name,
-      p.full_name AS author_full_name,
-      p.username AS author_username,
-      p.avatar_url,
-      m.content,
-      m.created_at
-    FROM public.chat_messages m
-    JOIN public.chat_rooms r ON m.room_id = r.id
-    JOIN public.profiles p ON m.user_id = p.id
-
-    -- Ensure they are still active in the room
-    JOIN public.room_participants rp
-      ON m.room_id = rp.room_id
-     AND rp.user_id = p_user_id
-     AND rp.status = 'active'
-
-    WHERE
-      m.created_at > NOW() - INTERVAL '90 days'
-      -- Exclude encrypted rooms
-      AND (COALESCE(r.is_personal_vault, false) = false)
-      AND (COALESCE(r.is_e2ee, false) = false)
-      -- Must be a todo message
-      AND ('todo' = ANY(m.tags) OR m.content ILIKE '%#todo%')
-
-      -- THE DELEGATION LOGIC
-      AND (
-        -- Case 1: Delegated (The current user's UUID is explicitly in the array)
-        p_user_id = ANY(m.mentioned_users)
-        OR
-        -- Case 2: Self-Assigned (Nobody was mentioned, AND the current user wrote it)
-        (
-          coalesce(cardinality(m.mentioned_users), 0) = 0
-          AND m.user_id = p_user_id
-        )
-      )
-
-      -- EXCLUDE DISMISSED ITEMS
-      AND NOT EXISTS (
-        SELECT 1
-        FROM public.user_dismissals ud
-        WHERE ud.user_id = p_user_id
-          -- Comparing UUID to UUID cleanly without type casting
-          AND ud.item_id = m.id
-          AND ud.item_type = 'todo'
-      )
-    ORDER BY m.created_at DESC
-    LIMIT 50
-  ) t;
-
-  RETURN COALESCE(result, '[]'::json);
-END;$$;
-
-
-CREATE FUNCTION public.handle_updated_at() RETURNS trigger
-    LANGUAGE plpgsql
-    AS $$
-BEGIN
-  NEW.updated_at = NOW();
-  RETURN NEW;
-END;
-$$;
-
-
-CREATE FUNCTION public.is_room_admin_or_mod(_room_id uuid) RETURNS boolean
-    LANGUAGE sql STABLE SECURITY DEFINER
-    SET search_path TO 'public'
-    AS $$
-  SELECT EXISTS (
-    SELECT 1
-    FROM public.room_participants rp
-    WHERE rp.room_id = _room_id
-      AND rp.user_id = auth.uid()
-      AND rp.status = 'active'
-      AND rp.role IN ('admin', 'moderator')
-  );
-$$;
-
-
-CREATE FUNCTION public.is_room_member(_room_id uuid) RETURNS boolean
-    LANGUAGE sql STABLE SECURITY DEFINER
-    SET search_path TO 'public'
-    AS $$
-  SELECT EXISTS (
-    SELECT 1
-    FROM public.room_participants rp
-    WHERE rp.room_id = _room_id
-      AND rp.user_id = auth.uid()
-      AND rp.status = 'active'
-  );
-$$;
-
-
-CREATE FUNCTION public.match_doc_segments(query_embedding public.vector, match_threshold double precision, match_count integer, p_room_id uuid) RETURNS TABLE(id bigint, content text, similarity double precision)
-    LANGUAGE plpgsql SECURITY DEFINER
-    AS $$
-BEGIN
-  RETURN QUERY
-  SELECT
-    ds.id,
-    ds.content,
-    1 - (ds.embedding <=> query_embedding) AS similarity
-  FROM public.doc_segments ds
-  -- Privacy Lock: Only search documents that were fed into THIS specific room
-  WHERE ds.room_id = p_room_id 
-  AND 1 - (ds.embedding <=> query_embedding) > match_threshold
-  ORDER BY ds.embedding <=> query_embedding
-  LIMIT match_count;
-END;
-$$;
-
-
-CREATE FUNCTION public.update_chat_room_timestamp() RETURNS trigger
-    LANGUAGE plpgsql
-    AS $$
-BEGIN
-  UPDATE public.chat_rooms
-  SET updated_at = NOW()
-  WHERE id = NEW.room_id;
-  
-  RETURN NEW;
-END;
-$$;
-
---
 -- Tables
 --
 
@@ -1123,7 +586,542 @@ CREATE POLICY "Users can share messages from their rooms" ON public.shared_conte
         )
     );
 
+--
+-- Private Functions
+--
 
+CREATE FUNCTION private.auto_execute_creator_transfer() RETURNS trigger
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'private', 'pg_temp'
+    AS $$
+DECLARE
+    v_room_id UUID;
+    v_nominee_id UUID;
+    v_old_owner_id UUID;
+    v_active_members INT;
+    v_required_votes INT;
+    v_current_yes_votes INT;
+BEGIN
+    SET LOCAL row_security = off;
+
+    IF NEW.vote = 'yes' THEN
+        SELECT p.room_id, p.nominee_user_id
+        INTO v_room_id, v_nominee_id
+        FROM public.governance_proposals p
+        WHERE p.id = NEW.proposal_id AND p.status = 'pending';
+
+        IF v_room_id IS NOT NULL THEN
+            SELECT count(*)
+            INTO v_active_members
+            FROM public.room_participants rp
+            WHERE rp.room_id = v_room_id AND rp.status = 'active';
+
+            v_required_votes := LEAST(CEIL(v_active_members * 0.51), 10);
+
+            SELECT count(*)
+            INTO v_current_yes_votes
+            FROM public.proposal_votes pv
+            WHERE pv.proposal_id = NEW.proposal_id AND pv.vote = 'yes';
+
+            IF v_current_yes_votes >= v_required_votes THEN
+                SELECT r.created_by
+                INTO v_old_owner_id
+                FROM public.chat_rooms r
+                WHERE r.id = v_room_id;
+
+                UPDATE public.chat_rooms
+                SET created_by = v_nominee_id
+                WHERE id = v_room_id;
+
+                UPDATE public.room_participants
+                SET role = 'member'
+                WHERE room_id = v_room_id AND user_id = v_old_owner_id;
+
+                UPDATE public.room_participants
+                SET role = 'admin'
+                WHERE room_id = v_room_id AND user_id = v_nominee_id;
+
+                UPDATE public.governance_proposals
+                SET status = 'executed'
+                WHERE id = NEW.proposal_id;
+            END IF;
+        END IF;
+    END IF;
+
+    RETURN NEW;
+END;
+$$;
+
+
+CREATE FUNCTION private.auto_toggle_dm_to_group() RETURNS trigger
+    LANGUAGE plpgsql SECURITY DEFINER
+    AS $$
+DECLARE
+  v_active_count INT;
+  v_allow_join BOOLEAN;
+  v_is_vault BOOLEAN;
+  v_room_name TEXT;
+  v_room_id UUID;
+BEGIN
+  -- Determine the affected room_id based on the database action
+  IF TG_OP = 'DELETE' THEN
+    v_room_id := OLD.room_id;
+  ELSE
+    v_room_id := NEW.room_id;
+  END IF;
+
+  -- Fetch room settings, including the room name
+  SELECT allow_join_requests, COALESCE(is_personal_vault, false), name
+  INTO v_allow_join, v_is_vault, v_room_name
+  FROM public.chat_rooms
+  WHERE id = v_room_id;
+
+  -- Ensure we never touch personal vaults
+  IF v_is_vault = FALSE THEN
+
+    -- Count how many 'active' members currently exist
+    SELECT count(*) INTO v_active_count
+    FROM public.room_participants
+    WHERE room_id = v_room_id AND status = 'active';
+
+    -- RULE 1: Upgrade to Group
+    -- If an unnamed DM gets a 3rd person, it becomes a group.
+    IF v_active_count > 2 THEN
+      UPDATE public.chat_rooms SET is_direct_message = false WHERE id = v_room_id;
+    END IF;
+
+    -- RULE 2: Downgrade to DM (The Fix)
+    -- ONLY downgrade to a DM if the active count is 2 AND the room does not have a custom name.
+    -- This protects your named community rooms from vanishing if members leave or haven't joined yet.
+    IF v_active_count <= 2 AND v_room_name IS NULL THEN
+      UPDATE public.chat_rooms SET is_direct_message = true WHERE id = v_room_id;
+    END IF;
+
+  END IF;
+
+  RETURN NULL;
+END;
+$$;
+
+
+CREATE FUNCTION private.delete_chat_message_attachments() RETURNS trigger
+    LANGUAGE plpgsql SECURITY DEFINER
+    AS $$
+DECLARE
+  v_elem jsonb;
+  v_path text;
+BEGIN
+  -- attachments is expected to be a JSON array
+  IF OLD.attachments IS NULL OR OLD.attachments = '[]'::jsonb THEN
+    RETURN OLD;
+  END IF;
+
+  FOR v_elem IN
+    SELECT value
+    FROM jsonb_array_elements(OLD.attachments) AS t(value)
+  LOOP
+    v_path := NULL;
+
+    IF jsonb_typeof(v_elem) = 'string' THEN
+      v_path := v_elem #>> '{}';
+    ELSIF jsonb_typeof(v_elem) = 'object' THEN
+      -- Support a few common shapes
+      v_path := COALESCE(
+        v_elem->>'path',
+        v_elem->>'file_path',
+        v_elem->>'storage_path',
+        v_elem->>'object',
+        v_elem->>'name'
+      );
+    END IF;
+
+    v_path := NULLIF(BTRIM(v_path), '');
+
+    IF v_path IS NOT NULL THEN
+      -- Bucket used by this project
+      DELETE FROM storage.objects
+      WHERE bucket_id = 'silo_uploads'
+        AND name = v_path;
+    END IF;
+  END LOOP;
+
+  RETURN OLD;
+END;
+$$;
+
+
+CREATE FUNCTION private.enforce_room_participant_update() RETURNS trigger
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'pg_catalog', 'public', 'auth'
+    AS $$
+begin
+  -- If the user is an admin in this room, allow all updates.
+  if exists (
+    select 1 from public.room_participants rp
+    where rp.room_id = NEW.room_id
+      and rp.user_id = auth.uid()
+      and rp.role = 'admin'
+  ) then
+    return NEW;
+  end if;
+
+  -- If the user is a moderator in this room, they may update status/title/role.
+  -- They cannot change who the participant is (user_id) or move it to another room.
+  if exists (
+    select 1 from public.room_participants rp
+    where rp.room_id = NEW.room_id
+      and rp.user_id = auth.uid()
+      and rp.role = 'moderator'
+  ) then
+    if (NEW.user_id <> OLD.user_id) or (NEW.room_id <> OLD.room_id) then
+      raise exception 'Moderators may not change participant identity or room';
+    end if;
+
+    -- Allow role changes (e.g., setting someone to admin), as long as the value is valid
+    -- (enforced by existing CHECK constraint).
+    if (NEW.joined_at <> OLD.joined_at) then
+      raise exception 'Moderators may not modify joined_at';
+    end if;
+
+    return NEW;
+  end if;
+
+  raise exception 'Not authorized to update room participants';
+end;
+$$;
+
+
+CREATE FUNCTION private.handle_new_room_admin() RETURNS trigger
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'pg_catalog', 'public'
+    AS $$
+BEGIN
+  -- We only insert if there is an authenticated user making the request
+  IF auth.uid() IS NOT NULL THEN
+    INSERT INTO public.room_participants (room_id, user_id, role, status)
+    VALUES (NEW.id, auth.uid(), 'admin', 'active');
+  END IF;
+
+  RETURN NEW;
+END;
+$$;
+
+
+CREATE FUNCTION private.is_room_participant_admin_or_moderator(p_room_id uuid, p_user_id uuid) RETURNS boolean
+    LANGUAGE sql STABLE SECURITY DEFINER
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+  select exists (
+    select 1
+    from public.room_participants rp
+    where rp.room_id = p_room_id
+      and rp.user_id = p_user_id
+      and rp.role::text in ('admin','moderator')
+  );
+$$;
+
+
+CREATE FUNCTION private.log_silo_activity() RETURNS trigger
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'pg_catalog', 'public'
+    AS $$
+DECLARE
+  fetched_room_name TEXT;
+BEGIN
+  -- 1. Fetch the actual text name of the room using the ID from the new message
+  SELECT name INTO fetched_room_name
+  FROM public.chat_rooms
+  WHERE id = NEW.room_id;
+
+  -- 2. Insert the human-readable record into the log
+  INSERT INTO public.silo_activity_logs (
+    user_id,
+    action_type,
+    location_name
+  )
+  VALUES (
+    NEW.user_id,
+    TG_ARGV[0], -- Action type (e.g., 'Sent Message')
+    COALESCE(fetched_room_name, 'General')
+  );
+
+  RETURN NEW;
+END;
+$$;
+
+
+CREATE FUNCTION private.prevent_downgrading_security() RETURNS trigger
+    LANGUAGE plpgsql SECURITY DEFINER
+    AS $$
+BEGIN
+  -- Check if attempting to disable a Personal Vault
+  IF OLD.is_personal_vault = true AND NEW.is_personal_vault = false THEN
+    RAISE EXCEPTION 'Security constraint violation: Cannot remove personal vault status from this room.';
+  END IF;
+
+  -- Check if attempting to disable End-to-End Encryption
+  IF OLD.is_e2ee = true AND NEW.is_e2ee = false THEN
+    RAISE EXCEPTION 'Security constraint violation: Cannot disable End-to-End Encryption once enabled.';
+  END IF;
+
+  -- If neither rule is broken, allow the update to proceed
+  RETURN NEW;
+END;
+$$;
+
+--
+-- Public Functions
+--
+
+CREATE FUNCTION public._is_admin_or_moderator_of_room(p_room_id uuid) RETURNS boolean
+    LANGUAGE sql STABLE
+    AS $$
+  SELECT public.is_room_admin_or_mod(p_room_id);
+$$;
+
+
+CREATE FUNCTION public.get_shared_message(p_share_id uuid) RETURNS json
+    LANGUAGE plpgsql SECURITY DEFINER
+    AS $$
+DECLARE
+  result JSON;
+BEGIN
+  SELECT json_build_object(
+    'id', m.id,
+    'original_message_id', m.id,
+    'content', m.content,
+    'created_at', m.created_at,
+    'attachments', m.attachments,
+    'author_name', COALESCE(p.display_name, p.full_name, 'Unknown User'),
+    'author_avatar', p.avatar_url,
+    'shared_by', COALESCE(sp.display_name, 'Someone')
+  ) INTO result
+  FROM public.shared_content sc
+  JOIN public.chat_messages m ON sc.original_message_id = m.id
+  LEFT JOIN public.profiles p ON m.user_id = p.id
+  LEFT JOIN public.profiles sp ON sc.shared_by_user_id = sp.id
+  WHERE sc.id = p_share_id
+  AND m.allow_forwarding = true; 
+
+  RETURN result;
+END;
+$$;
+
+
+CREATE FUNCTION public.get_unique_room_tags(p_room_id uuid) RETURNS TABLE(tag text)
+    LANGUAGE plpgsql SECURITY DEFINER
+    AS $$
+BEGIN
+  RETURN QUERY
+  SELECT DISTINCT unnest(tags) AS tag
+  FROM public.chat_messages
+  WHERE room_id = p_room_id 
+    AND tags IS NOT NULL 
+    AND array_length(tags, 1) > 0;
+END;
+$$;
+
+
+CREATE FUNCTION public.get_user_action_inbox(p_user_id uuid) RETURNS json
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'public', 'pg_temp'
+    AS $$DECLARE
+  result json;
+BEGIN
+  IF auth.uid() IS NULL OR auth.uid() != p_user_id THEN
+    RAISE EXCEPTION 'Unauthorized: You can only query your own inbox.';
+  END IF;
+  -- Build the inbox payload
+  SELECT json_agg(row_to_json(t)) INTO result
+  FROM (
+    SELECT 
+      m.id AS message_id,
+      m.room_id,
+      r.name AS room_name,
+      p.full_name AS author_full_name,
+      p.username AS author_username,
+      p.avatar_url,
+      m.content,
+      m.created_at,
+      CASE 
+        -- Compare the user's UUID against the UUID array
+        WHEN p_user_id = ANY(m.mentioned_users) THEN 'mention'
+        ELSE 'reply'
+      END AS inbox_type
+    FROM public.chat_messages m
+    JOIN public.chat_rooms r ON m.room_id = r.id
+    JOIN public.profiles p ON m.user_id = p.id
+    -- Ensure they are still active in the room
+    JOIN public.room_participants rp 
+      ON m.room_id = rp.room_id
+     AND rp.user_id = p_user_id
+     AND rp.status = 'active'
+    WHERE
+      m.created_at > NOW() - INTERVAL '90 days' 
+      AND m.user_id <> p_user_id
+      AND (
+        -- Match against the new UUID array
+        p_user_id = ANY(m.mentioned_users)
+        OR m.reply_to_message_id IN (
+          SELECT id
+          FROM public.chat_messages
+          WHERE user_id = p_user_id
+        )
+      )
+      -- Exclude encrypted rooms
+      AND COALESCE(r.is_personal_vault, false) = false
+      AND COALESCE(r.is_e2ee, false) = false
+      AND NOT EXISTS (
+        SELECT 1
+        FROM public.user_dismissals ud
+        WHERE ud.user_id = p_user_id
+          AND ud.item_id = m.id 
+          AND ud.item_type IN ('mention', 'reply')
+      )
+    ORDER BY m.created_at DESC
+    LIMIT 50
+  ) t;
+
+  RETURN COALESCE(result, '[]'::json);
+END;$$;
+
+
+CREATE FUNCTION public.get_user_active_todos(p_user_id uuid) RETURNS json
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'public', 'pg_temp'
+    AS $$DECLARE
+  result json;
+BEGIN
+  IF auth.uid() IS NULL OR auth.uid() != p_user_id THEN
+    RAISE EXCEPTION 'Unauthorized: You can only query your own inbox.';
+  END IF;
+  SELECT json_agg(row_to_json(t)) INTO result
+  FROM (
+    SELECT
+      m.id AS message_id,
+      m.room_id,
+      r.name AS room_name,
+      p.full_name AS author_full_name,
+      p.username AS author_username,
+      p.avatar_url,
+      m.content,
+      m.created_at
+    FROM public.chat_messages m
+    JOIN public.chat_rooms r ON m.room_id = r.id
+    JOIN public.profiles p ON m.user_id = p.id
+
+    -- Ensure they are still active in the room
+    JOIN public.room_participants rp
+      ON m.room_id = rp.room_id
+     AND rp.user_id = p_user_id
+     AND rp.status = 'active'
+
+    WHERE
+      m.created_at > NOW() - INTERVAL '90 days'
+      -- Exclude encrypted rooms
+      AND (COALESCE(r.is_personal_vault, false) = false)
+      AND (COALESCE(r.is_e2ee, false) = false)
+      -- Must be a todo message
+      AND ('todo' = ANY(m.tags) OR m.content ILIKE '%#todo%')
+
+      -- THE DELEGATION LOGIC
+      AND (
+        -- Case 1: Delegated (The current user's UUID is explicitly in the array)
+        p_user_id = ANY(m.mentioned_users)
+        OR
+        -- Case 2: Self-Assigned (Nobody was mentioned, AND the current user wrote it)
+        (
+          coalesce(cardinality(m.mentioned_users), 0) = 0
+          AND m.user_id = p_user_id
+        )
+      )
+
+      -- EXCLUDE DISMISSED ITEMS
+      AND NOT EXISTS (
+        SELECT 1
+        FROM public.user_dismissals ud
+        WHERE ud.user_id = p_user_id
+          -- Comparing UUID to UUID cleanly without type casting
+          AND ud.item_id = m.id
+          AND ud.item_type = 'todo'
+      )
+    ORDER BY m.created_at DESC
+    LIMIT 50
+  ) t;
+
+  RETURN COALESCE(result, '[]'::json);
+END;$$;
+
+
+CREATE FUNCTION public.handle_updated_at() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+  NEW.updated_at = NOW();
+  RETURN NEW;
+END;
+$$;
+
+
+CREATE FUNCTION public.is_room_admin_or_mod(_room_id uuid) RETURNS boolean
+    LANGUAGE sql STABLE SECURITY DEFINER
+    SET search_path TO 'public'
+    AS $$
+  SELECT EXISTS (
+    SELECT 1
+    FROM public.room_participants rp
+    WHERE rp.room_id = _room_id
+      AND rp.user_id = auth.uid()
+      AND rp.status = 'active'
+      AND rp.role IN ('admin', 'moderator')
+  );
+$$;
+
+
+CREATE FUNCTION public.is_room_member(_room_id uuid) RETURNS boolean
+    LANGUAGE sql STABLE SECURITY DEFINER
+    SET search_path TO 'public'
+    AS $$
+  SELECT EXISTS (
+    SELECT 1
+    FROM public.room_participants rp
+    WHERE rp.room_id = _room_id
+      AND rp.user_id = auth.uid()
+      AND rp.status = 'active'
+  );
+$$;
+
+
+CREATE FUNCTION public.match_doc_segments(query_embedding public.vector, match_threshold double precision, match_count integer, p_room_id uuid) RETURNS TABLE(id bigint, content text, similarity double precision)
+    LANGUAGE plpgsql SECURITY DEFINER
+    AS $$
+BEGIN
+  RETURN QUERY
+  SELECT
+    ds.id,
+    ds.content,
+    1 - (ds.embedding <=> query_embedding) AS similarity
+  FROM public.doc_segments ds
+  -- Privacy Lock: Only search documents that were fed into THIS specific room
+  WHERE ds.room_id = p_room_id 
+  AND 1 - (ds.embedding <=> query_embedding) > match_threshold
+  ORDER BY ds.embedding <=> query_embedding
+  LIMIT match_count;
+END;
+$$;
+
+
+CREATE FUNCTION public.update_chat_room_timestamp() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+  UPDATE public.chat_rooms
+  SET updated_at = NOW()
+  WHERE id = NEW.room_id;
+  
+  RETURN NEW;
+END;
+$$;
 
 -- ============================================================================
 -- NORMSAR SILO: PRODUCTION PERFORMANCE INDEXES
