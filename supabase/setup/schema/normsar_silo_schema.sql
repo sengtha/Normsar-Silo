@@ -1,79 +1,37 @@
 --
 -- PostgreSQL database dump
+-- Clean schema for Normsar Silo (public schema only)
+-- All Supabase auth, storage, and realtime schemas removed
+--
 
 --
--- Name: pg_cron; Type: EXTENSION; Schema: -; Owner: -
+-- Extensions
 --
 
 CREATE EXTENSION IF NOT EXISTS pg_cron WITH SCHEMA pg_catalog;
-
---
--- Name: EXTENSION pg_cron; Type: COMMENT; Schema: -; Owner: -
---
-
 COMMENT ON EXTENSION pg_cron IS 'Job scheduler for PostgreSQL';
 
---
--- Name: pg_net; Type: EXTENSION; Schema: -; Owner: -
---
-
 CREATE EXTENSION IF NOT EXISTS pg_net WITH SCHEMA extensions;
-
---
--- Name: EXTENSION pg_net; Type: COMMENT; Schema: -; Owner: -
---
-
 COMMENT ON EXTENSION pg_net IS 'Async HTTP';
 
---
--- Name: private; Type: SCHEMA; Schema: -; Owner: -
---
-
-CREATE SCHEMA private;
-
---
--- Name: pgcrypto; Type: EXTENSION; Schema: -; Owner: -
---
-
 CREATE EXTENSION IF NOT EXISTS pgcrypto WITH SCHEMA extensions;
-
-
---
--- Name: EXTENSION pgcrypto; Type: COMMENT; Schema: -; Owner: -
---
-
 COMMENT ON EXTENSION pgcrypto IS 'cryptographic functions';
 
---
--- Name: uuid-ossp; Type: EXTENSION; Schema: -; Owner: -
---
-
 CREATE EXTENSION IF NOT EXISTS "uuid-ossp" WITH SCHEMA extensions;
-
-
---
--- Name: EXTENSION "uuid-ossp"; Type: COMMENT; Schema: -; Owner: -
---
-
 COMMENT ON EXTENSION "uuid-ossp" IS 'generate universally unique identifiers (UUIDs)';
 
-
---
--- Name: vector; Type: EXTENSION; Schema: -; Owner: -
---
-
 CREATE EXTENSION IF NOT EXISTS vector WITH SCHEMA public;
-
-
---
--- Name: EXTENSION vector; Type: COMMENT; Schema: -; Owner: -
---
-
 COMMENT ON EXTENSION vector IS 'vector data type and ivfflat and hnsw access methods';
 
+--
+-- Schemas
+--
+
+CREATE SCHEMA IF NOT EXISTS private;
+CREATE SCHEMA IF NOT EXISTS extensions;
 
 --
--- Name: auto_execute_creator_transfer(); Type: FUNCTION; Schema: private; Owner: -
+-- Private Functions
 --
 
 CREATE FUNCTION private.auto_execute_creator_transfer() RETURNS trigger
@@ -139,10 +97,6 @@ END;
 $$;
 
 
---
--- Name: auto_toggle_dm_to_group(); Type: FUNCTION; Schema: private; Owner: -
---
-
 CREATE FUNCTION private.auto_toggle_dm_to_group() RETURNS trigger
     LANGUAGE plpgsql SECURITY DEFINER
     AS $$
@@ -163,7 +117,7 @@ BEGIN
   -- Fetch room settings, including the room name
   SELECT allow_join_requests, COALESCE(is_personal_vault, false), name
   INTO v_allow_join, v_is_vault, v_room_name
-  FROM chat_rooms
+  FROM public.chat_rooms
   WHERE id = v_room_id;
 
   -- Ensure we never touch personal vaults
@@ -171,20 +125,20 @@ BEGIN
 
     -- Count how many 'active' members currently exist
     SELECT count(*) INTO v_active_count
-    FROM room_participants
+    FROM public.room_participants
     WHERE room_id = v_room_id AND status = 'active';
 
     -- RULE 1: Upgrade to Group
     -- If an unnamed DM gets a 3rd person, it becomes a group.
     IF v_active_count > 2 THEN
-      UPDATE chat_rooms SET is_direct_message = false WHERE id = v_room_id;
+      UPDATE public.chat_rooms SET is_direct_message = false WHERE id = v_room_id;
     END IF;
 
     -- RULE 2: Downgrade to DM (The Fix)
     -- ONLY downgrade to a DM if the active count is 2 AND the room does not have a custom name.
     -- This protects your named community rooms from vanishing if members leave or haven't joined yet.
     IF v_active_count <= 2 AND v_room_name IS NULL THEN
-      UPDATE chat_rooms SET is_direct_message = true WHERE id = v_room_id;
+      UPDATE public.chat_rooms SET is_direct_message = true WHERE id = v_room_id;
     END IF;
 
   END IF;
@@ -193,10 +147,6 @@ BEGIN
 END;
 $$;
 
-
---
--- Name: delete_chat_message_attachments(); Type: FUNCTION; Schema: private; Owner: -
---
 
 CREATE FUNCTION private.delete_chat_message_attachments() RETURNS trigger
     LANGUAGE plpgsql SECURITY DEFINER
@@ -244,10 +194,6 @@ END;
 $$;
 
 
---
--- Name: enforce_room_participant_update(); Type: FUNCTION; Schema: private; Owner: -
---
-
 CREATE FUNCTION private.enforce_room_participant_update() RETURNS trigger
     LANGUAGE plpgsql SECURITY DEFINER
     SET search_path TO 'pg_catalog', 'public', 'auth'
@@ -289,10 +235,6 @@ end;
 $$;
 
 
---
--- Name: handle_new_room_admin(); Type: FUNCTION; Schema: private; Owner: -
---
-
 CREATE FUNCTION private.handle_new_room_admin() RETURNS trigger
     LANGUAGE plpgsql SECURITY DEFINER
     SET search_path TO 'pg_catalog', 'public'
@@ -309,10 +251,6 @@ END;
 $$;
 
 
---
--- Name: is_room_participant_admin_or_moderator(uuid, uuid); Type: FUNCTION; Schema: private; Owner: -
---
-
 CREATE FUNCTION private.is_room_participant_admin_or_moderator(p_room_id uuid, p_user_id uuid) RETURNS boolean
     LANGUAGE sql STABLE SECURITY DEFINER
     SET search_path TO 'public', 'pg_temp'
@@ -326,10 +264,6 @@ CREATE FUNCTION private.is_room_participant_admin_or_moderator(p_room_id uuid, p
   );
 $$;
 
-
---
--- Name: log_silo_activity(); Type: FUNCTION; Schema: private; Owner: -
---
 
 CREATE FUNCTION private.log_silo_activity() RETURNS trigger
     LANGUAGE plpgsql SECURITY DEFINER
@@ -360,10 +294,6 @@ END;
 $$;
 
 
---
--- Name: prevent_downgrading_security(); Type: FUNCTION; Schema: private; Owner: -
---
-
 CREATE FUNCTION private.prevent_downgrading_security() RETURNS trigger
     LANGUAGE plpgsql SECURITY DEFINER
     AS $$
@@ -383,9 +313,8 @@ BEGIN
 END;
 $$;
 
-
 --
--- Name: _is_admin_or_moderator_of_room(uuid); Type: FUNCTION; Schema: public; Owner: -
+-- Public Functions
 --
 
 CREATE FUNCTION public._is_admin_or_moderator_of_room(p_room_id uuid) RETURNS boolean
@@ -395,10 +324,6 @@ CREATE FUNCTION public._is_admin_or_moderator_of_room(p_room_id uuid) RETURNS bo
 $$;
 
 
---
--- Name: get_shared_message(uuid); Type: FUNCTION; Schema: public; Owner: -
---
-
 CREATE FUNCTION public.get_shared_message(p_share_id uuid) RETURNS json
     LANGUAGE plpgsql SECURITY DEFINER
     AS $$
@@ -407,7 +332,7 @@ DECLARE
 BEGIN
   SELECT json_build_object(
     'id', m.id,
-    'original_message_id', m.id, -- ADD THIS LINE!
+    'original_message_id', m.id,
     'content', m.content,
     'created_at', m.created_at,
     'attachments', m.attachments,
@@ -427,10 +352,6 @@ END;
 $$;
 
 
---
--- Name: get_unique_room_tags(uuid); Type: FUNCTION; Schema: public; Owner: -
---
-
 CREATE FUNCTION public.get_unique_room_tags(p_room_id uuid) RETURNS TABLE(tag text)
     LANGUAGE plpgsql SECURITY DEFINER
     AS $$
@@ -444,10 +365,6 @@ BEGIN
 END;
 $$;
 
-
---
--- Name: get_user_action_inbox(uuid); Type: FUNCTION; Schema: public; Owner: -
---
 
 CREATE FUNCTION public.get_user_action_inbox(p_user_id uuid) RETURNS json
     LANGUAGE plpgsql SECURITY DEFINER
@@ -475,11 +392,11 @@ BEGIN
         WHEN p_user_id = ANY(m.mentioned_users) THEN 'mention'
         ELSE 'reply'
       END AS inbox_type
-    FROM chat_messages m
-    JOIN chat_rooms r ON m.room_id = r.id
-    JOIN profiles p ON m.user_id = p.id
+    FROM public.chat_messages m
+    JOIN public.chat_rooms r ON m.room_id = r.id
+    JOIN public.profiles p ON m.user_id = p.id
     -- Ensure they are still active in the room
-    JOIN room_participants rp 
+    JOIN public.room_participants rp 
       ON m.room_id = rp.room_id
      AND rp.user_id = p_user_id
      AND rp.status = 'active'
@@ -491,7 +408,7 @@ BEGIN
         p_user_id = ANY(m.mentioned_users)
         OR m.reply_to_message_id IN (
           SELECT id
-          FROM chat_messages
+          FROM public.chat_messages
           WHERE user_id = p_user_id
         )
       )
@@ -513,10 +430,6 @@ BEGIN
 END;$$;
 
 
---
--- Name: get_user_active_todos(uuid); Type: FUNCTION; Schema: public; Owner: -
---
-
 CREATE FUNCTION public.get_user_active_todos(p_user_id uuid) RETURNS json
     LANGUAGE plpgsql SECURITY DEFINER
     SET search_path TO 'public', 'pg_temp'
@@ -537,12 +450,12 @@ BEGIN
       p.avatar_url,
       m.content,
       m.created_at
-    FROM chat_messages m
-    JOIN chat_rooms r ON m.room_id = r.id
-    JOIN profiles p ON m.user_id = p.id
+    FROM public.chat_messages m
+    JOIN public.chat_rooms r ON m.room_id = r.id
+    JOIN public.profiles p ON m.user_id = p.id
 
     -- Ensure they are still active in the room
-    JOIN room_participants rp
+    JOIN public.room_participants rp
       ON m.room_id = rp.room_id
      AND rp.user_id = p_user_id
      AND rp.status = 'active'
@@ -584,10 +497,6 @@ BEGIN
 END;$$;
 
 
---
--- Name: handle_updated_at(); Type: FUNCTION; Schema: public; Owner: -
---
-
 CREATE FUNCTION public.handle_updated_at() RETURNS trigger
     LANGUAGE plpgsql
     AS $$
@@ -597,10 +506,6 @@ BEGIN
 END;
 $$;
 
-
---
--- Name: is_room_admin_or_mod(uuid); Type: FUNCTION; Schema: public; Owner: -
---
 
 CREATE FUNCTION public.is_room_admin_or_mod(_room_id uuid) RETURNS boolean
     LANGUAGE sql STABLE SECURITY DEFINER
@@ -617,10 +522,6 @@ CREATE FUNCTION public.is_room_admin_or_mod(_room_id uuid) RETURNS boolean
 $$;
 
 
---
--- Name: is_room_member(uuid); Type: FUNCTION; Schema: public; Owner: -
---
-
 CREATE FUNCTION public.is_room_member(_room_id uuid) RETURNS boolean
     LANGUAGE sql STABLE SECURITY DEFINER
     SET search_path TO 'public'
@@ -635,10 +536,6 @@ CREATE FUNCTION public.is_room_member(_room_id uuid) RETURNS boolean
 $$;
 
 
---
--- Name: match_doc_segments(public.vector, double precision, integer, uuid); Type: FUNCTION; Schema: public; Owner: -
---
-
 CREATE FUNCTION public.match_doc_segments(query_embedding public.vector, match_threshold double precision, match_count integer, p_room_id uuid) RETURNS TABLE(id bigint, content text, similarity double precision)
     LANGUAGE plpgsql SECURITY DEFINER
     AS $$
@@ -648,7 +545,7 @@ BEGIN
     ds.id,
     ds.content,
     1 - (ds.embedding <=> query_embedding) AS similarity
-  FROM doc_segments ds
+  FROM public.doc_segments ds
   -- Privacy Lock: Only search documents that were fed into THIS specific room
   WHERE ds.room_id = p_room_id 
   AND 1 - (ds.embedding <=> query_embedding) > match_threshold
@@ -657,9 +554,6 @@ BEGIN
 END;
 $$;
 
---
--- Name: update_chat_room_timestamp(); Type: FUNCTION; Schema: public; Owner: -
---
 
 CREATE FUNCTION public.update_chat_room_timestamp() RETURNS trigger
     LANGUAGE plpgsql
@@ -667,16 +561,14 @@ CREATE FUNCTION public.update_chat_room_timestamp() RETURNS trigger
 BEGIN
   UPDATE public.chat_rooms
   SET updated_at = NOW()
-  WHERE id = NEW.room_id; -- Update this if your messages table uses a different column name like 'chat_room_id'
+  WHERE id = NEW.room_id;
   
   RETURN NEW;
 END;
 $$;
 
-
-
 --
--- Name: ai_briefing_logs; Type: TABLE; Schema: public; Owner: -
+-- Tables
 --
 
 CREATE TABLE public.ai_briefing_logs (
@@ -687,11 +579,6 @@ CREATE TABLE public.ai_briefing_logs (
     briefing_date date DEFAULT CURRENT_DATE,
     created_at timestamp with time zone DEFAULT now()
 );
-
-
---
--- Name: chat_messages; Type: TABLE; Schema: public; Owner: -
---
 
 CREATE TABLE public.chat_messages (
     id uuid DEFAULT gen_random_uuid() NOT NULL,
@@ -711,11 +598,6 @@ CREATE TABLE public.chat_messages (
     CONSTRAINT chat_messages_content_len_check CHECK ((char_length(content) <= 20000)),
     CONSTRAINT chat_messages_tags_len_check CHECK (((tags IS NULL) OR (array_length(tags, 1) <= 20)))
 );
-
-
---
--- Name: chat_rooms; Type: TABLE; Schema: public; Owner: -
---
 
 CREATE TABLE public.chat_rooms (
     id uuid DEFAULT gen_random_uuid() NOT NULL,
@@ -739,13 +621,15 @@ CREATE TABLE public.chat_rooms (
     CONSTRAINT check_room_description_not_empty CHECK (((description IS NULL) OR (char_length(TRIM(BOTH FROM description)) > 0)))
 );
 
-
---
--- Name: doc_segments; Type: TABLE; Schema: public; Owner: -
---
+CREATE SEQUENCE public.doc_segments_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
 
 CREATE TABLE public.doc_segments (
-    id bigint NOT NULL,
+    id bigint DEFAULT nextval('public.doc_segments_id_seq'::regclass) NOT NULL,
     room_id uuid,
     content text NOT NULL,
     embedding public.vector(768) NOT NULL,
@@ -758,30 +642,6 @@ CREATE TABLE public.doc_segments (
     CONSTRAINT doc_segments_file_path_len_check CHECK (((file_path IS NULL) OR (char_length(file_path) <= 1024)))
 );
 
-
---
--- Name: doc_segments_id_seq; Type: SEQUENCE; Schema: public; Owner: -
---
-
-CREATE SEQUENCE public.doc_segments_id_seq
-    START WITH 1
-    INCREMENT BY 1
-    NO MINVALUE
-    NO MAXVALUE
-    CACHE 1;
-
-
---
--- Name: doc_segments_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: -
---
-
-ALTER SEQUENCE public.doc_segments_id_seq OWNED BY public.doc_segments.id;
-
-
---
--- Name: governance_proposals; Type: TABLE; Schema: public; Owner: -
---
-
 CREATE TABLE public.governance_proposals (
     id uuid DEFAULT gen_random_uuid() NOT NULL,
     room_id uuid,
@@ -793,11 +653,6 @@ CREATE TABLE public.governance_proposals (
     CONSTRAINT room_governance_proposals_status_check CHECK ((status = ANY (ARRAY['pending'::text, 'executed'::text, 'rejected'::text])))
 );
 
-
---
--- Name: message_reactions; Type: TABLE; Schema: public; Owner: -
---
-
 CREATE TABLE public.message_reactions (
     id uuid DEFAULT gen_random_uuid() NOT NULL,
     message_id uuid NOT NULL,
@@ -806,11 +661,6 @@ CREATE TABLE public.message_reactions (
     created_at timestamp with time zone DEFAULT timezone('utc'::text, now()) NOT NULL,
     CONSTRAINT message_reactions_emoji_len_check CHECK (((emoji IS NULL) OR (char_length(emoji) <= 16)))
 );
-
-
---
--- Name: profiles; Type: TABLE; Schema: public; Owner: -
---
 
 CREATE TABLE public.profiles (
     id uuid NOT NULL,
@@ -839,10 +689,6 @@ VALUES (
     'https://cdn.normsar.io/official/ai.png'
 ) ON CONFLICT (id) DO UPDATE SET avatar_url = EXCLUDED.avatar_url;
 
---
--- Name: proposal_votes; Type: TABLE; Schema: public; Owner: -
---
-
 CREATE TABLE public.proposal_votes (
     proposal_id uuid NOT NULL,
     user_id uuid NOT NULL,
@@ -850,11 +696,6 @@ CREATE TABLE public.proposal_votes (
     created_at timestamp with time zone DEFAULT now(),
     CONSTRAINT proposal_votes_vote_check CHECK ((vote = ANY (ARRAY['yes'::text, 'no'::text])))
 );
-
-
---
--- Name: room_keys; Type: TABLE; Schema: public; Owner: -
---
 
 CREATE TABLE public.room_keys (
     id uuid DEFAULT gen_random_uuid() NOT NULL,
@@ -866,11 +707,6 @@ CREATE TABLE public.room_keys (
     CONSTRAINT room_keys_lit_ciphertext_len_check CHECK (((lit_ciphertext IS NOT NULL) AND (char_length(lit_ciphertext) <= 500))),
     CONSTRAINT room_keys_lit_data_hash_len_check CHECK (((lit_data_hash IS NOT NULL) AND (char_length(lit_data_hash) <= 256)))
 );
-
-
---
--- Name: room_participants; Type: TABLE; Schema: public; Owner: -
---
 
 CREATE TABLE public.room_participants (
     room_id uuid NOT NULL,
@@ -884,11 +720,6 @@ CREATE TABLE public.room_participants (
     CONSTRAINT valid_room_status CHECK ((status = ANY (ARRAY['pending'::text, 'active'::text, 'rejected'::text, 'left'::text])))
 );
 
-
---
--- Name: shared_content; Type: TABLE; Schema: public; Owner: -
---
-
 CREATE TABLE public.shared_content (
     id uuid DEFAULT extensions.uuid_generate_v4() NOT NULL,
     original_message_id uuid,
@@ -897,11 +728,6 @@ CREATE TABLE public.shared_content (
     target_room_id uuid,
     created_at timestamp with time zone DEFAULT now()
 );
-
-
---
--- Name: silo_activity_logs; Type: TABLE; Schema: public; Owner: -
---
 
 CREATE TABLE public.silo_activity_logs (
     id uuid DEFAULT gen_random_uuid() NOT NULL,
@@ -913,11 +739,6 @@ CREATE TABLE public.silo_activity_logs (
     CONSTRAINT silo_activity_logs_location_name_len_check CHECK (((location_name IS NULL) OR (char_length(location_name) <= 100)))
 );
 
-
---
--- Name: user_dismissals; Type: TABLE; Schema: public; Owner: -
---
-
 CREATE TABLE public.user_dismissals (
     user_id uuid NOT NULL,
     item_id uuid NOT NULL,
@@ -925,981 +746,48 @@ CREATE TABLE public.user_dismissals (
     created_at timestamp with time zone DEFAULT now()
 );
 
-
-ALTER TABLE ONLY public.doc_segments ALTER COLUMN id SET DEFAULT nextval('public.doc_segments_id_seq'::regclass);
-
-
 --
--- Name: ai_briefing_logs ai_briefing_logs_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+-- Primary Keys
 --
 
 ALTER TABLE ONLY public.ai_briefing_logs
     ADD CONSTRAINT ai_briefing_logs_pkey PRIMARY KEY (id);
 
-
---
--- Name: chat_messages chat_messages_pkey; Type: CONSTRAINT; Schema: public; Owner: -
---
-
 ALTER TABLE ONLY public.chat_messages
     ADD CONSTRAINT chat_messages_pkey PRIMARY KEY (id);
-
-
---
--- Name: doc_segments doc_segments_pkey; Type: CONSTRAINT; Schema: public; Owner: -
---
 
 ALTER TABLE ONLY public.doc_segments
     ADD CONSTRAINT doc_segments_pkey PRIMARY KEY (id);
 
-
---
--- Name: message_reactions message_reactions_message_id_user_id_emoji_key; Type: CONSTRAINT; Schema: public; Owner: -
---
+ALTER TABLE ONLY public.message_reactions
+    ADD CONSTRAINT message_reactions_pkey PRIMARY KEY (id);
 
 ALTER TABLE ONLY public.message_reactions
     ADD CONSTRAINT message_reactions_message_id_user_id_emoji_key UNIQUE (message_id, user_id, emoji);
 
-
---
--- Name: message_reactions message_reactions_pkey; Type: CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.message_reactions
-    ADD CONSTRAINT message_reactions_pkey PRIMARY KEY (id);
-
-
---
--- Name: profiles profiles_pkey; Type: CONSTRAINT; Schema: public; Owner: -
---
-
 ALTER TABLE ONLY public.profiles
     ADD CONSTRAINT profiles_pkey PRIMARY KEY (id);
-
-
---
--- Name: profiles profiles_username_key; Type: CONSTRAINT; Schema: public; Owner: -
---
 
 ALTER TABLE ONLY public.profiles
     ADD CONSTRAINT profiles_username_key UNIQUE (username);
 
-
---
--- Name: proposal_votes proposal_votes_pkey; Type: CONSTRAINT; Schema: public; Owner: -
---
-
 ALTER TABLE ONLY public.proposal_votes
     ADD CONSTRAINT proposal_votes_pkey PRIMARY KEY (proposal_id, user_id);
-
-
---
--- Name: governance_proposals room_governance_proposals_pkey; Type: CONSTRAINT; Schema: public; Owner: -
---
 
 ALTER TABLE ONLY public.governance_proposals
     ADD CONSTRAINT room_governance_proposals_pkey PRIMARY KEY (id);
 
-
---
--- Name: room_keys room_keys_pkey; Type: CONSTRAINT; Schema: public; Owner: -
---
-
 ALTER TABLE ONLY public.room_keys
     ADD CONSTRAINT room_keys_pkey PRIMARY KEY (id);
-
-
---
--- Name: room_participants room_participants_pkey; Type: CONSTRAINT; Schema: public; Owner: -
---
 
 ALTER TABLE ONLY public.room_participants
     ADD CONSTRAINT room_participants_pkey PRIMARY KEY (room_id, user_id);
 
-
---
--- Name: chat_rooms rooms_pkey; Type: CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.chat_rooms
-    ADD CONSTRAINT rooms_pkey PRIMARY KEY (id);
-
-
---
--- Name: shared_content shared_content_pkey; Type: CONSTRAINT; Schema: public; Owner: -
---
-
 ALTER TABLE ONLY public.shared_content
     ADD CONSTRAINT shared_content_pkey PRIMARY KEY (id);
-
-
---
--- Name: silo_activity_logs silo_activity_logs_pkey; Type: CONSTRAINT; Schema: public; Owner: -
---
 
 ALTER TABLE ONLY public.silo_activity_logs
     ADD CONSTRAINT silo_activity_logs_pkey PRIMARY KEY (id);
 
-
---
--- Name: room_keys unique_room_version; Type: CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.room_keys
-    ADD CONSTRAINT unique_room_version UNIQUE (room_id, version);
-
-
---
--- Name: shared_content unique_share_per_user_room; Type: CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.shared_content
-    ADD CONSTRAINT unique_share_per_user_room UNIQUE NULLS NOT DISTINCT (original_message_id, shared_by_user_id, target_room_id);
-
-
---
--- Name: ai_briefing_logs unique_user_briefing_day; Type: CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.ai_briefing_logs
-    ADD CONSTRAINT unique_user_briefing_day UNIQUE (user_id, briefing_date);
-
-
---
--- Name: message_reactions unique_user_message_emoji; Type: CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.message_reactions
-    ADD CONSTRAINT unique_user_message_emoji UNIQUE (message_id, user_id, emoji);
-
-
---
--- Name: user_dismissals user_dismissals_pkey; Type: CONSTRAINT; Schema: public; Owner: -
---
-
 ALTER TABLE ONLY public.user_dismissals
     ADD CONSTRAINT user_dismissals_pkey PRIMARY KEY (user_id, item_id, item_type);
-
-
---
--- Name: idx_chat_messages_mentions; Type: INDEX; Schema: public; Owner: -
---
-
-CREATE INDEX idx_chat_messages_mentions ON public.chat_messages USING gin (mentioned_users);
-
-
---
--- Name: idx_chat_messages_reply_to_message_id; Type: INDEX; Schema: public; Owner: -
---
-
-CREATE INDEX idx_chat_messages_reply_to_message_id ON public.chat_messages USING btree (reply_to_message_id);
-
-
---
--- Name: idx_chat_messages_room_id; Type: INDEX; Schema: public; Owner: -
---
-
-CREATE INDEX idx_chat_messages_room_id ON public.chat_messages USING btree (room_id);
-
-
---
--- Name: idx_chat_messages_user_id; Type: INDEX; Schema: public; Owner: -
---
-
-CREATE INDEX idx_chat_messages_user_id ON public.chat_messages USING btree (user_id);
-
-
---
--- Name: idx_chat_rooms_is_archived; Type: INDEX; Schema: public; Owner: -
---
-
-CREATE INDEX idx_chat_rooms_is_archived ON public.chat_rooms USING btree (is_archived);
-
-
---
--- Name: idx_chat_rooms_parent_room_id; Type: INDEX; Schema: public; Owner: -
---
-
-CREATE INDEX idx_chat_rooms_parent_room_id ON public.chat_rooms USING btree (parent_room_id);
-
-
---
--- Name: idx_doc_segments_embedding; Type: INDEX; Schema: public; Owner: -
---
-
-CREATE INDEX idx_doc_segments_embedding ON public.doc_segments USING hnsw (embedding public.vector_cosine_ops);
-
-
---
--- Name: idx_doc_segments_fed_by_user_id; Type: INDEX; Schema: public; Owner: -
---
-
-CREATE INDEX idx_doc_segments_fed_by_user_id ON public.doc_segments USING btree (fed_by_user_id);
-
-
---
--- Name: idx_doc_segments_msg_file; Type: INDEX; Schema: public; Owner: -
---
-
-CREATE INDEX idx_doc_segments_msg_file ON public.doc_segments USING btree (source_message_id, file_path);
-
-
---
--- Name: idx_doc_segments_room_id; Type: INDEX; Schema: public; Owner: -
---
-
-CREATE INDEX idx_doc_segments_room_id ON public.doc_segments USING btree (room_id);
-
-
---
--- Name: idx_message_reactions_user_id; Type: INDEX; Schema: public; Owner: -
---
-
-CREATE INDEX idx_message_reactions_user_id ON public.message_reactions USING btree (user_id);
-
-
---
--- Name: idx_room_keys_room_id; Type: INDEX; Schema: public; Owner: -
---
-
-CREATE INDEX idx_room_keys_room_id ON public.room_keys USING btree (room_id);
-
-
---
--- Name: idx_room_participants_user_id; Type: INDEX; Schema: public; Owner: -
---
-
-CREATE INDEX idx_room_participants_user_id ON public.room_participants USING btree (user_id);
-
-
---
--- Name: idx_shared_content_original_author_id; Type: INDEX; Schema: public; Owner: -
---
-
-CREATE INDEX idx_shared_content_original_author_id ON public.shared_content USING btree (original_author_id);
-
-
---
--- Name: idx_shared_content_shared_by_user_id; Type: INDEX; Schema: public; Owner: -
---
-
-CREATE INDEX idx_shared_content_shared_by_user_id ON public.shared_content USING btree (shared_by_user_id);
-
-
---
--- Name: idx_shared_content_target_room_id; Type: INDEX; Schema: public; Owner: -
---
-
-CREATE INDEX idx_shared_content_target_room_id ON public.shared_content USING btree (target_room_id);
-
-
---
--- Name: idx_user_dismissals_lookup; Type: INDEX; Schema: public; Owner: -
---
-
-CREATE INDEX idx_user_dismissals_lookup ON public.user_dismissals USING btree (user_id, item_type, item_id);
-
-
---
--- Name: chat_rooms on_room_created; Type: TRIGGER; Schema: public; Owner: -
---
-
-CREATE TRIGGER on_room_created AFTER INSERT ON public.chat_rooms FOR EACH ROW EXECUTE FUNCTION private.handle_new_room_admin();
-
-
---
--- Name: room_participants room_participants_update_guard; Type: TRIGGER; Schema: public; Owner: -
---
-
-CREATE TRIGGER room_participants_update_guard BEFORE UPDATE ON public.room_participants FOR EACH ROW EXECUTE FUNCTION private.enforce_room_participant_update();
-
-
---
--- Name: chat_rooms set_chat_rooms_updated_at; Type: TRIGGER; Schema: public; Owner: -
---
-
-CREATE TRIGGER set_chat_rooms_updated_at BEFORE UPDATE ON public.chat_rooms FOR EACH ROW EXECUTE FUNCTION public.handle_updated_at();
-
-
---
--- Name: chat_messages trg_delete_chat_message_attachments; Type: TRIGGER; Schema: public; Owner: -
---
-
-CREATE TRIGGER trg_delete_chat_message_attachments AFTER DELETE ON public.chat_messages FOR EACH ROW EXECUTE FUNCTION private.delete_chat_message_attachments();
-
-
---
--- Name: proposal_votes trigger_auto_execute_creator_transfer; Type: TRIGGER; Schema: public; Owner: -
---
-
-CREATE TRIGGER trigger_auto_execute_creator_transfer AFTER INSERT ON public.proposal_votes FOR EACH ROW EXECUTE FUNCTION private.auto_execute_creator_transfer();
-
-
---
--- Name: room_participants trigger_auto_toggle_dm_to_group; Type: TRIGGER; Schema: public; Owner: -
---
-
-CREATE TRIGGER trigger_auto_toggle_dm_to_group AFTER INSERT OR DELETE OR UPDATE OF status ON public.room_participants FOR EACH ROW EXECUTE FUNCTION private.auto_toggle_dm_to_group();
-
-
---
--- Name: chat_messages trigger_log_new_message; Type: TRIGGER; Schema: public; Owner: -
---
-
-CREATE TRIGGER trigger_log_new_message AFTER INSERT ON public.chat_messages FOR EACH ROW EXECUTE FUNCTION private.log_silo_activity('Sent Message');
-
-
---
--- Name: chat_rooms trigger_prevent_downgrading_security; Type: TRIGGER; Schema: public; Owner: -
---
-
-CREATE TRIGGER trigger_prevent_downgrading_security BEFORE UPDATE ON public.chat_rooms FOR EACH ROW EXECUTE FUNCTION private.prevent_downgrading_security();
-
-
---
--- Name: chat_messages trigger_update_room_timestamp; Type: TRIGGER; Schema: public; Owner: -
---
-
-CREATE TRIGGER trigger_update_room_timestamp AFTER INSERT ON public.chat_messages FOR EACH ROW EXECUTE FUNCTION public.update_chat_room_timestamp();
-
-
---
--- Name: ai_briefing_logs ai_briefing_logs_user_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.ai_briefing_logs
-    ADD CONSTRAINT ai_briefing_logs_user_id_fkey FOREIGN KEY (user_id) REFERENCES public.profiles(id);
-
-
---
--- Name: chat_messages chat_messages_reply_to_message_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.chat_messages
-    ADD CONSTRAINT chat_messages_reply_to_message_id_fkey FOREIGN KEY (reply_to_message_id) REFERENCES public.chat_messages(id) ON DELETE SET NULL;
-
-
---
--- Name: chat_messages chat_messages_room_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.chat_messages
-    ADD CONSTRAINT chat_messages_room_id_fkey FOREIGN KEY (room_id) REFERENCES public.chat_rooms(id) ON DELETE CASCADE;
-
-
---
--- Name: chat_messages chat_messages_user_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.chat_messages
-    ADD CONSTRAINT chat_messages_user_id_fkey FOREIGN KEY (user_id) REFERENCES public.profiles(id) ON DELETE SET NULL;
-
-
---
--- Name: chat_rooms chat_rooms_parent_room_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.chat_rooms
-    ADD CONSTRAINT chat_rooms_parent_room_id_fkey FOREIGN KEY (parent_room_id) REFERENCES public.chat_rooms(id) ON DELETE SET NULL;
-
-
---
--- Name: doc_segments doc_segments_fed_by_user_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.doc_segments
-    ADD CONSTRAINT doc_segments_fed_by_user_id_fkey FOREIGN KEY (fed_by_user_id) REFERENCES public.profiles(id);
-
-
---
--- Name: doc_segments doc_segments_room_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.doc_segments
-    ADD CONSTRAINT doc_segments_room_id_fkey FOREIGN KEY (room_id) REFERENCES public.chat_rooms(id) ON DELETE CASCADE;
-
-
---
--- Name: doc_segments doc_segments_source_message_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.doc_segments
-    ADD CONSTRAINT doc_segments_source_message_id_fkey FOREIGN KEY (source_message_id) REFERENCES public.chat_messages(id) ON DELETE CASCADE;
-
-
---
--- Name: governance_proposals fk_governance_nominee; Type: FK CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.governance_proposals
-    ADD CONSTRAINT fk_governance_nominee FOREIGN KEY (nominee_user_id) REFERENCES public.profiles(id);
-
-
---
--- Name: governance_proposals fk_governance_proposed_by; Type: FK CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.governance_proposals
-    ADD CONSTRAINT fk_governance_proposed_by FOREIGN KEY (proposed_by) REFERENCES public.profiles(id);
-
-
---
--- Name: message_reactions message_reactions_message_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.message_reactions
-    ADD CONSTRAINT message_reactions_message_id_fkey FOREIGN KEY (message_id) REFERENCES public.chat_messages(id) ON DELETE CASCADE;
-
-
---
--- Name: message_reactions message_reactions_user_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.message_reactions
-    ADD CONSTRAINT message_reactions_user_id_fkey FOREIGN KEY (user_id) REFERENCES public.profiles(id) ON DELETE CASCADE;
-
-
---
--- Name: proposal_votes proposal_votes_proposal_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.proposal_votes
-    ADD CONSTRAINT proposal_votes_proposal_id_fkey FOREIGN KEY (proposal_id) REFERENCES public.governance_proposals(id) ON DELETE CASCADE;
-
-
---
--- Name: proposal_votes proposal_votes_user_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.proposal_votes
-    ADD CONSTRAINT proposal_votes_user_id_fkey FOREIGN KEY (user_id) REFERENCES public.profiles(id) ON DELETE CASCADE;
-
-
---
--- Name: governance_proposals room_governance_proposals_room_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.governance_proposals
-    ADD CONSTRAINT room_governance_proposals_room_id_fkey FOREIGN KEY (room_id) REFERENCES public.chat_rooms(id) ON DELETE CASCADE;
-
-
---
--- Name: room_keys room_keys_room_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.room_keys
-    ADD CONSTRAINT room_keys_room_id_fkey FOREIGN KEY (room_id) REFERENCES public.chat_rooms(id) ON DELETE CASCADE;
-
-
---
--- Name: room_participants room_participants_room_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.room_participants
-    ADD CONSTRAINT room_participants_room_id_fkey FOREIGN KEY (room_id) REFERENCES public.chat_rooms(id) ON DELETE CASCADE;
-
-
---
--- Name: room_participants room_participants_user_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.room_participants
-    ADD CONSTRAINT room_participants_user_id_fkey FOREIGN KEY (user_id) REFERENCES public.profiles(id) ON DELETE CASCADE;
-
-
---
--- Name: shared_content shared_content_original_author_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.shared_content
-    ADD CONSTRAINT shared_content_original_author_id_fkey FOREIGN KEY (original_author_id) REFERENCES public.profiles(id);
-
-
---
--- Name: shared_content shared_content_original_message_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.shared_content
-    ADD CONSTRAINT shared_content_original_message_id_fkey FOREIGN KEY (original_message_id) REFERENCES public.chat_messages(id) ON DELETE CASCADE;
-
-
---
--- Name: shared_content shared_content_shared_by_user_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.shared_content
-    ADD CONSTRAINT shared_content_shared_by_user_id_fkey FOREIGN KEY (shared_by_user_id) REFERENCES public.profiles(id);
-
-
---
--- Name: shared_content shared_content_target_room_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.shared_content
-    ADD CONSTRAINT shared_content_target_room_id_fkey FOREIGN KEY (target_room_id) REFERENCES public.chat_rooms(id) ON DELETE CASCADE;
-
-
---
--- Name: user_dismissals user_dismissals_user_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.user_dismissals
-    ADD CONSTRAINT user_dismissals_user_id_fkey FOREIGN KEY (user_id) REFERENCES public.profiles(id) ON DELETE CASCADE;
-
-
---
--- Name: proposal_votes Admins and Mods can cast votes on active proposals; Type: POLICY; Schema: public; Owner: -
---
-
-CREATE POLICY "Admins and Mods can cast votes on active proposals" ON public.proposal_votes FOR INSERT TO authenticated WITH CHECK (((user_id = auth.uid()) AND (EXISTS ( SELECT 1
-   FROM (public.governance_proposals gp
-     JOIN public.room_participants rp ON ((rp.room_id = gp.room_id)))
-  WHERE ((gp.id = proposal_votes.proposal_id) AND (rp.user_id = auth.uid()) AND (rp.status = 'active'::text) AND ((rp.role)::text = ANY ((ARRAY['admin'::character varying, 'moderator'::character varying])::text[])) AND (gp.status = 'pending'::text))))));
-
-
---
--- Name: room_participants Admins and Mods can update participants; Type: POLICY; Schema: public; Owner: -
---
-
-CREATE POLICY "Admins and Mods can update participants" ON public.room_participants FOR UPDATE TO authenticated USING ((EXISTS ( SELECT 1
-   FROM public.room_participants rp
-  WHERE ((rp.room_id = room_participants.room_id) AND (rp.user_id = auth.uid()) AND ((rp.role)::text = ANY ((ARRAY['admin'::character varying, 'moderator'::character varying])::text[]))))));
-
-
---
--- Name: chat_rooms Admins and Mods can update rooms; Type: POLICY; Schema: public; Owner: -
---
-
-CREATE POLICY "Admins and Mods can update rooms" ON public.chat_rooms FOR UPDATE TO authenticated USING ((EXISTS ( SELECT 1
-   FROM public.room_participants
-  WHERE ((room_participants.room_id = chat_rooms.id) AND (room_participants.user_id = auth.uid()) AND ((room_participants.role)::text = ANY ((ARRAY['admin'::character varying, 'moderator'::character varying])::text[]))))));
-
-
---
--- Name: chat_messages Allow admins and mods to pin messages; Type: POLICY; Schema: public; Owner: -
---
-
-CREATE POLICY "Allow admins and mods to pin messages" ON public.chat_messages FOR UPDATE TO authenticated USING ((EXISTS ( SELECT 1
-   FROM public.room_participants
-  WHERE ((room_participants.room_id = chat_messages.room_id) AND (room_participants.user_id = auth.uid()) AND ((room_participants.role)::text = ANY ((ARRAY['admin'::character varying, 'moderator'::character varying])::text[]))))));
-
-
---
--- Name: chat_messages Allow public to view messages in public rooms; Type: POLICY; Schema: public; Owner: -
---
-
-CREATE POLICY "Allow public to view messages in public rooms" ON public.chat_messages FOR SELECT TO anon USING ((EXISTS ( SELECT 1
-   FROM public.chat_rooms
-  WHERE ((chat_rooms.id = chat_messages.room_id) AND (chat_rooms.is_public = true)))));
-
-
---
--- Name: profiles Allow public to view profiles of active public participants; Type: POLICY; Schema: public; Owner: -
---
-
-CREATE POLICY "Allow public to view profiles of active public participants" ON public.profiles FOR SELECT TO anon USING ((EXISTS ( SELECT 1
-   FROM (public.chat_messages
-     JOIN public.chat_rooms ON ((chat_rooms.id = chat_messages.room_id)))
-  WHERE ((chat_messages.user_id = profiles.id) AND (chat_rooms.is_public = true)))));
-
-
---
--- Name: chat_rooms Allow public to view public rooms; Type: POLICY; Schema: public; Owner: -
---
-
-CREATE POLICY "Allow public to view public rooms" ON public.chat_rooms FOR SELECT TO anon USING ((is_public = true));
-
-
---
--- Name: shared_content Anyone can insert a share link; Type: POLICY; Schema: public; Owner: -
---
-
-CREATE POLICY "Anyone can insert a share link" ON public.shared_content FOR INSERT TO authenticated WITH CHECK ((shared_by_user_id = COALESCE(auth.uid(), ((auth.jwt() ->> 'sub'::text))::uuid)));
-
-
---
--- Name: chat_rooms Authenticated users can create rooms; Type: POLICY; Schema: public; Owner: -
---
-
-CREATE POLICY "Authenticated users can create rooms" ON public.chat_rooms FOR INSERT TO authenticated WITH CHECK ((auth.uid() IS NOT NULL));
-
-
---
--- Name: chat_messages Authors can edit their own messages; Type: POLICY; Schema: public; Owner: -
---
-
-CREATE POLICY "Authors can edit their own messages" ON public.chat_messages FOR UPDATE TO authenticated USING ((user_id = auth.uid())) WITH CHECK ((user_id = auth.uid()));
-
-
---
--- Name: chat_messages Authors or Admins/Mods can delete messages; Type: POLICY; Schema: public; Owner: -
---
-
-CREATE POLICY "Authors or Admins/Mods can delete messages" ON public.chat_messages FOR DELETE TO authenticated USING (((user_id = auth.uid()) OR (EXISTS ( SELECT 1
-   FROM public.room_participants
-  WHERE ((room_participants.room_id = chat_messages.room_id) AND (room_participants.user_id = auth.uid()) AND ((room_participants.role)::text = ANY ((ARRAY['admin'::character varying, 'moderator'::character varying])::text[])))))));
-
-
---
--- Name: room_participants Leave room or Admins/Mods can kick; Type: POLICY; Schema: public; Owner: -
---
-
-CREATE POLICY "Leave room or Admins/Mods can kick" ON public.room_participants FOR DELETE TO authenticated USING (((user_id = auth.uid()) OR (public.is_room_admin_or_mod(room_id) AND (((EXISTS ( SELECT 1
-   FROM public.room_participants rp_self
-  WHERE ((rp_self.room_id = room_participants.room_id) AND (rp_self.user_id = auth.uid()) AND ((rp_self.role)::text = 'admin'::text)))) AND (user_id <> ( SELECT cr.created_by
-   FROM public.chat_rooms cr
-  WHERE (cr.id = room_participants.room_id)))) OR ((NOT (EXISTS ( SELECT 1
-   FROM public.room_participants rp_self
-  WHERE ((rp_self.room_id = room_participants.room_id) AND (rp_self.user_id = auth.uid()) AND ((rp_self.role)::text = 'admin'::text))))) AND ((role)::text = 'member'::text))) AND (NOT (EXISTS ( SELECT 1
-   FROM public.governance_proposals gp
-  WHERE ((gp.room_id = room_participants.room_id) AND (gp.nominee_user_id = room_participants.user_id) AND (gp.status = 'active'::text))))))));
-
-
---
--- Name: chat_messages Messages viewable by participants or if public; Type: POLICY; Schema: public; Owner: -
---
-
-CREATE POLICY "Messages viewable by participants or if public" ON public.chat_messages FOR SELECT TO authenticated USING (((EXISTS ( SELECT 1
-   FROM public.chat_rooms
-  WHERE ((chat_rooms.id = chat_messages.room_id) AND (chat_rooms.is_public = true)))) OR (EXISTS ( SELECT 1
-   FROM public.room_participants
-  WHERE ((room_participants.room_id = chat_messages.room_id) AND (room_participants.user_id = auth.uid()))))));
-
-
---
--- Name: room_participants Only Admins and Mods can add participants; Type: POLICY; Schema: public; Owner: -
---
-
-CREATE POLICY "Only Admins and Mods can add participants" ON public.room_participants FOR INSERT TO authenticated WITH CHECK (public.is_room_admin_or_mod(room_id));
-
-
---
--- Name: chat_rooms Only Admins can delete rooms; Type: POLICY; Schema: public; Owner: -
---
-
-CREATE POLICY "Only Admins can delete rooms" ON public.chat_rooms FOR DELETE TO authenticated USING ((EXISTS ( SELECT 1
-   FROM public.room_participants
-  WHERE ((room_participants.room_id = chat_rooms.id) AND (room_participants.user_id = auth.uid()) AND ((room_participants.role)::text = 'admin'::text)))));
-
-
---
--- Name: chat_messages Only participants can send messages; Type: POLICY; Schema: public; Owner: -
---
-
-CREATE POLICY "Only participants can send messages" ON public.chat_messages FOR INSERT TO authenticated WITH CHECK ((EXISTS ( SELECT 1
-   FROM public.room_participants
-  WHERE ((room_participants.room_id = chat_messages.room_id) AND (room_participants.user_id = auth.uid())))));
-
-
---
--- Name: room_keys Participants can insert room keys for Silos only; Type: POLICY; Schema: public; Owner: -
---
-
-CREATE POLICY "Participants can insert room keys for Silos only" ON public.room_keys FOR INSERT TO authenticated WITH CHECK ((EXISTS ( SELECT 1
-   FROM (public.room_participants rp
-     JOIN public.chat_rooms cr ON ((rp.room_id = cr.id)))
-  WHERE ((rp.room_id = room_keys.room_id) AND (rp.user_id = auth.uid()) AND (cr.is_e2ee = true)))));
-
-
---
--- Name: room_keys Participants can view room keys in Silos; Type: POLICY; Schema: public; Owner: -
---
-
-CREATE POLICY "Participants can view room keys in Silos" ON public.room_keys FOR SELECT TO authenticated USING ((EXISTS ( SELECT 1
-   FROM (public.room_participants rp
-     JOIN public.chat_rooms cr ON ((rp.room_id = cr.id)))
-  WHERE ((rp.room_id = room_keys.room_id) AND (rp.user_id = auth.uid()) AND (cr.is_e2ee = true)))));
-
-
---
--- Name: shared_content Public Read Access; Type: POLICY; Schema: public; Owner: -
---
-
-CREATE POLICY "Public Read Access" ON public.shared_content FOR SELECT TO authenticated USING (true);
-
-
---
--- Name: governance_proposals Users can create proposals in their active rooms; Type: POLICY; Schema: public; Owner: -
---
-
-CREATE POLICY "Users can create proposals in their active rooms" ON public.governance_proposals FOR INSERT TO authenticated WITH CHECK (((proposed_by = auth.uid()) AND (EXISTS ( SELECT 1
-   FROM public.room_participants rp
-  WHERE ((rp.room_id = governance_proposals.room_id) AND (rp.user_id = auth.uid()) AND (rp.status = 'active'::text))))));
-
-
---
--- Name: message_reactions Users can delete their own reactions; Type: POLICY; Schema: public; Owner: -
---
-
-CREATE POLICY "Users can delete their own reactions" ON public.message_reactions FOR DELETE TO authenticated USING ((user_id = auth.uid()));
-
-
---
--- Name: shared_content Users can delete their own share links; Type: POLICY; Schema: public; Owner: -
---
-
-CREATE POLICY "Users can delete their own share links" ON public.shared_content FOR DELETE TO authenticated USING ((shared_by_user_id = COALESCE(auth.uid(), ((auth.jwt() ->> 'sub'::text))::uuid)));
-
-
---
--- Name: ai_briefing_logs Users can insert own logs; Type: POLICY; Schema: public; Owner: -
---
-
-CREATE POLICY "Users can insert own logs" ON public.ai_briefing_logs FOR INSERT TO authenticated WITH CHECK ((auth.uid() = user_id));
-
-
---
--- Name: silo_activity_logs Users can insert own logs; Type: POLICY; Schema: public; Owner: -
---
-
-CREATE POLICY "Users can insert own logs" ON public.silo_activity_logs FOR INSERT TO authenticated WITH CHECK ((user_id = auth.uid()));
-
-
---
--- Name: silo_activity_logs Users can insert own silo logs; Type: POLICY; Schema: public; Owner: -
---
-
-CREATE POLICY "Users can insert own silo logs" ON public.silo_activity_logs FOR INSERT TO authenticated WITH CHECK ((user_id = auth.uid()));
-
-
---
--- Name: profiles Users can insert their own profile; Type: POLICY; Schema: public; Owner: -
---
-
-CREATE POLICY "Users can insert their own profile" ON public.profiles FOR INSERT TO authenticated WITH CHECK ((id = auth.uid()));
-
-
---
--- Name: message_reactions Users can insert their own reactions; Type: POLICY; Schema: public; Owner: -
---
-
-CREATE POLICY "Users can insert their own reactions" ON public.message_reactions FOR INSERT TO authenticated WITH CHECK ((user_id = auth.uid()));
-
-
---
--- Name: user_dismissals Users can only insert their own dismissals; Type: POLICY; Schema: public; Owner: -
---
-
-CREATE POLICY "Users can only insert their own dismissals" ON public.user_dismissals FOR INSERT TO authenticated WITH CHECK ((user_id = auth.uid()));
-
-
---
--- Name: ai_briefing_logs Users can only see their own briefings; Type: POLICY; Schema: public; Owner: -
---
-
-CREATE POLICY "Users can only see their own briefings" ON public.ai_briefing_logs FOR SELECT TO authenticated USING ((auth.uid() = user_id));
-
-
---
--- Name: silo_activity_logs Users can read own silo logs; Type: POLICY; Schema: public; Owner: -
---
-
-CREATE POLICY "Users can read own silo logs" ON public.silo_activity_logs FOR SELECT TO authenticated USING ((user_id = auth.uid()));
-
-
---
--- Name: user_dismissals Users can read their own dismissals; Type: POLICY; Schema: public; Owner: -
---
-
-CREATE POLICY "Users can read their own dismissals" ON public.user_dismissals FOR SELECT TO authenticated USING ((user_id = auth.uid()));
-
-
---
--- Name: profiles Users can update their own profile; Type: POLICY; Schema: public; Owner: -
---
-
-CREATE POLICY "Users can update their own profile" ON public.profiles FOR UPDATE TO authenticated USING ((id = auth.uid())) WITH CHECK ((id = auth.uid()));
-
-
---
--- Name: message_reactions Users can update their own reactions; Type: POLICY; Schema: public; Owner: -
---
-
-CREATE POLICY "Users can update their own reactions" ON public.message_reactions FOR UPDATE TO authenticated USING ((user_id = auth.uid())) WITH CHECK ((user_id = auth.uid()));
-
-
---
--- Name: proposal_votes Users can update their own votes; Type: POLICY; Schema: public; Owner: -
---
-
-CREATE POLICY "Users can update their own votes" ON public.proposal_votes FOR UPDATE TO authenticated USING ((user_id = auth.uid())) WITH CHECK ((user_id = auth.uid()));
-
-
---
--- Name: ai_briefing_logs Users can view own logs; Type: POLICY; Schema: public; Owner: -
---
-
-CREATE POLICY "Users can view own logs" ON public.ai_briefing_logs FOR SELECT TO authenticated USING ((auth.uid() = user_id));
-
-
---
--- Name: governance_proposals Users can view proposals in their active rooms; Type: POLICY; Schema: public; Owner: -
---
-
-CREATE POLICY "Users can view proposals in their active rooms" ON public.governance_proposals FOR SELECT TO authenticated USING ((EXISTS ( SELECT 1
-   FROM public.room_participants rp
-  WHERE ((rp.room_id = governance_proposals.room_id) AND (rp.user_id = auth.uid()) AND (rp.status = 'active'::text)))));
-
-
---
--- Name: proposal_votes Users can view votes for proposals in their active rooms; Type: POLICY; Schema: public; Owner: -
---
-
-CREATE POLICY "Users can view votes for proposals in their active rooms" ON public.proposal_votes FOR SELECT TO authenticated USING ((EXISTS ( SELECT 1
-   FROM (public.governance_proposals rgp
-     JOIN public.room_participants rp ON ((rgp.room_id = rp.room_id)))
-  WHERE ((rgp.id = proposal_votes.proposal_id) AND (rp.user_id = auth.uid()) AND (rp.status = 'active'::text)))));
-
-
---
--- Name: profiles Valid token holders can read all profiles; Type: POLICY; Schema: public; Owner: -
---
-
-CREATE POLICY "Valid token holders can read all profiles" ON public.profiles FOR SELECT TO authenticated USING (((auth.jwt() ->> 'sub'::text) IS NOT NULL));
-
-
---
--- Name: message_reactions Valid token holders can read reactions; Type: POLICY; Schema: public; Owner: -
---
-
-CREATE POLICY "Valid token holders can read reactions" ON public.message_reactions FOR SELECT TO authenticated USING (((auth.jwt() ->> 'sub'::text) IS NOT NULL));
-
-
---
--- Name: room_participants View room participants; Type: POLICY; Schema: public; Owner: -
---
-
-CREATE POLICY "View room participants" ON public.room_participants FOR SELECT TO authenticated USING ((public.is_room_admin_or_mod(room_id) OR ((status = 'active'::text) AND public.is_room_member(room_id)) OR (user_id = auth.uid())));
-
-
---
--- Name: ai_briefing_logs; Type: ROW SECURITY; Schema: public; Owner: -
---
-
-ALTER TABLE public.ai_briefing_logs ENABLE ROW LEVEL SECURITY;
-
---
--- Name: chat_messages; Type: ROW SECURITY; Schema: public; Owner: -
---
-
-ALTER TABLE public.chat_messages ENABLE ROW LEVEL SECURITY;
-
---
--- Name: chat_rooms; Type: ROW SECURITY; Schema: public; Owner: -
---
-
-ALTER TABLE public.chat_rooms ENABLE ROW LEVEL SECURITY;
-
---
--- Name: chat_rooms chat_rooms_select_stable; Type: POLICY; Schema: public; Owner: -
---
-
-CREATE POLICY chat_rooms_select_stable ON public.chat_rooms FOR SELECT TO authenticated USING (((created_by = ( SELECT auth.uid() AS uid)) OR (EXISTS ( SELECT 1
-   FROM public.room_participants
-  WHERE ((room_participants.room_id = chat_rooms.id) AND (room_participants.user_id = ( SELECT auth.uid() AS uid)) AND (room_participants.status = 'active'::text))))));
-
-
---
--- Name: doc_segments; Type: ROW SECURITY; Schema: public; Owner: -
---
-
-ALTER TABLE public.doc_segments ENABLE ROW LEVEL SECURITY;
-
---
--- Name: doc_segments doc_segments_insert_own; Type: POLICY; Schema: public; Owner: -
---
-
-CREATE POLICY doc_segments_insert_own ON public.doc_segments FOR INSERT TO authenticated WITH CHECK (((fed_by_user_id = auth.uid()) AND (EXISTS ( SELECT 1
-   FROM public.room_participants rp
-  WHERE ((rp.room_id = doc_segments.room_id) AND (rp.user_id = auth.uid()) AND (rp.status = 'active'::text))))));
-
-
---
--- Name: doc_segments doc_segments_select_room_members; Type: POLICY; Schema: public; Owner: -
---
-
-CREATE POLICY doc_segments_select_room_members ON public.doc_segments FOR SELECT TO authenticated USING ((EXISTS ( SELECT 1
-   FROM public.room_participants rp
-  WHERE ((rp.room_id = doc_segments.room_id) AND (rp.user_id = auth.uid()) AND (rp.status = 'active'::text)))));
-
-
---
--- Name: governance_proposals; Type: ROW SECURITY; Schema: public; Owner: -
---
-
-ALTER TABLE public.governance_proposals ENABLE ROW LEVEL SECURITY;
-
---
--- Name: message_reactions; Type: ROW SECURITY; Schema: public; Owner: -
---
-
-ALTER TABLE public.message_reactions ENABLE ROW LEVEL SECURITY;
-
---
--- Name: profiles; Type: ROW SECURITY; Schema: public; Owner: -
---
-
-ALTER TABLE public.profiles ENABLE ROW LEVEL SECURITY;
-
---
--- Name: proposal_votes; Type: ROW SECURITY; Schema: public; Owner: -
---
-
-ALTER TABLE public.proposal_votes ENABLE ROW LEVEL SECURITY;
-
---
--- Name: room_keys; Type: ROW SECURITY; Schema: public; Owner: -
---
-
-ALTER TABLE public.room_keys ENABLE ROW LEVEL SECURITY;
-
---
--- Name: room_participants; Type: ROW SECURITY; Schema: public; Owner: -
---
-
-ALTER TABLE public.room_participants ENABLE ROW LEVEL SECURITY;
-
---
--- Name: shared_content; Type: ROW SECURITY; Schema: public; Owner: -
---
-
-ALTER TABLE public.shared_content ENABLE ROW LEVEL SECURITY;
-
---
--- Name: silo_activity_logs; Type: ROW SECURITY; Schema: public; Owner: -
---
-
-ALTER TABLE public.silo_activity_logs ENABLE ROW LEVEL SECURITY;
-
-
---
--- Name: user_dismissals; Type: ROW SECURITY; Schema: public; Owner: -
---
-
-ALTER TABLE public.user_dismissals ENABLE ROW LEVEL SECURITY;
-
---
--- Name: objects Users can delete their own files; Type: POLICY; Schema: storage; Owner: -
---
-
-CREATE POLICY "Users can delete their own files" ON storage.objects FOR DELETE USING (((bucket_id = 'silo_uploads'::text) AND ((string_to_array(name, '/'::text))[1] = (auth.jwt() ->> 'sub'::text))));
-
-
---
--- Name: objects Valid token holders can upload files; Type: POLICY; Schema: storage; Owner: -
---
-
-CREATE POLICY "Valid token holders can upload files" ON storage.objects FOR INSERT WITH CHECK (((bucket_id = 'silo_uploads'::text) AND (((auth.jwt() ->> 'sub'::text))::uuid IS NOT NULL)));
-
-
---
--- Name: objects Valid token holders can view files; Type: POLICY; Schema: storage; Owner: -
---
-
-CREATE POLICY "Valid token holders can view files" ON storage.objects FOR SELECT USING (((bucket_id = 'silo_uploads'::text) AND (((auth.jwt() ->> 'sub'::text))::uuid IS NOT NULL)));
-
-
---
--- PostgreSQL database dump complete
---
-
