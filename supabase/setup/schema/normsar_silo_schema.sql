@@ -1195,3 +1195,21 @@ SELECT cron.schedule(
   WHERE created_at < (NOW() - INTERVAL '3 months');
   $$
 );
+-- Storage
+INSERT INTO storage.buckets (id, name, public) VALUES ('silo_uploads', 'silo_uploads', false);
+CREATE POLICY "Valid token holders can view files" ON storage.objects 
+FOR SELECT USING (
+  (bucket_id = 'silo_uploads'::text) AND 
+  (((auth.jwt() ->> 'sub'::text))::uuid IS NOT NULL)
+);
+CREATE POLICY "Valid token holders can upload files" ON storage.objects 
+FOR INSERT WITH CHECK (
+  (bucket_id = 'silo_uploads'::text) AND 
+  (((auth.jwt() ->> 'sub'::text))::uuid IS NOT NULL)
+);
+CREATE POLICY "Users can delete their own files" ON storage.objects 
+FOR DELETE USING (
+  (bucket_id = 'silo_uploads'::text) AND 
+  ((string_to_array(name, '/'::text))[1] = (auth.jwt() ->> 'sub'::text))
+);
+
