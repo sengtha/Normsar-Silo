@@ -905,17 +905,6 @@ CREATE TABLE public.silo_activity_logs (
 
 
 --
--- Name: silo_config; Type: TABLE; Schema: public; Owner: -
---
-
-CREATE TABLE public.silo_config (
-    id uuid DEFAULT gen_random_uuid() NOT NULL,
-    silo_id uuid NOT NULL,
-    updated_at timestamp with time zone DEFAULT now() NOT NULL
-);
-
-
---
 -- Name: user_dismissals; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -1040,22 +1029,6 @@ ALTER TABLE ONLY public.shared_content
 
 ALTER TABLE ONLY public.silo_activity_logs
     ADD CONSTRAINT silo_activity_logs_pkey PRIMARY KEY (id);
-
-
---
--- Name: silo_config silo_config_pkey; Type: CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.silo_config
-    ADD CONSTRAINT silo_config_pkey PRIMARY KEY (id);
-
-
---
--- Name: silo_config silo_config_silo_id_key; Type: CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.silo_config
-    ADD CONSTRAINT silo_config_silo_id_key UNIQUE (silo_id);
 
 
 --
@@ -1493,13 +1466,6 @@ CREATE POLICY "Admins and Mods can update rooms" ON public.chat_rooms FOR UPDATE
 
 
 --
--- Name: silo_config Admins can update silo_config; Type: POLICY; Schema: public; Owner: -
---
-
-CREATE POLICY "Admins can update silo_config" ON public.silo_config FOR UPDATE TO authenticated USING ((((auth.jwt() -> 'app_metadata'::text) ->> 'silo_role'::text) = 'admin'::text)) WITH CHECK ((((auth.jwt() -> 'app_metadata'::text) ->> 'silo_role'::text) = 'admin'::text));
-
-
---
 -- Name: chat_messages Allow admins and mods to pin messages; Type: POLICY; Schema: public; Owner: -
 --
 
@@ -1895,11 +1861,6 @@ ALTER TABLE public.shared_content ENABLE ROW LEVEL SECURITY;
 
 ALTER TABLE public.silo_activity_logs ENABLE ROW LEVEL SECURITY;
 
---
--- Name: silo_config; Type: ROW SECURITY; Schema: public; Owner: -
---
-
-ALTER TABLE public.silo_config ENABLE ROW LEVEL SECURITY;
 
 --
 -- Name: user_dismissals; Type: ROW SECURITY; Schema: public; Owner: -
