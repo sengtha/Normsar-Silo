@@ -1122,3 +1122,64 @@ CREATE POLICY "Users can share messages from their rooms" ON public.shared_conte
             )
         )
     );
+
+
+
+-- ============================================================================
+-- NORMSAR SILO: PRODUCTION PERFORMANCE INDEXES
+-- Purpose: Optimized for AI Search, Real-time Messaging, and DAO Governance.
+-- ============================================================================
+
+-- 1. AI VECTOR SEARCH (Most Critical)
+-- Ensures fast similarity search for RAG/STEM research.
+-- Already present in original schema, included here for completeness.
+CREATE INDEX IF NOT EXISTS idx_doc_segments_embedding 
+ON public.doc_segments USING hnsw (embedding public.vector_cosine_ops);
+
+-- 2. CHAT & MESSAGING PERFORMANCE
+-- Speeds up loading the newest messages when entering a room.
+CREATE INDEX IF NOT EXISTS idx_chat_messages_room_id_created_at 
+ON public.chat_messages(room_id, created_at DESC);
+
+-- Speeds up looking up specific authors for message history.
+CREATE INDEX IF NOT EXISTS idx_chat_messages_user_id 
+ON public.chat_messages(user_id);
+
+-- 3. NOTIFICATIONS & INBOX (Mentions/Replies)
+-- Speeds up the "Action Inbox" by indexing the mentioned_users array.
+CREATE INDEX IF NOT EXISTS idx_chat_messages_mentions 
+ON public.chat_messages USING gin (mentioned_users);
+
+-- Speeds up reply-thread lookups.
+CREATE INDEX IF NOT EXISTS idx_chat_messages_reply_to 
+ON public.chat_messages(reply_to_message_id);
+
+-- 4. PERMISSIONS & LOOKUPS
+-- Speeds up checking if a user is an Admin/Mod in a room (used in RLS).
+CREATE INDEX IF NOT EXISTS idx_room_participants_user_id 
+ON public.room_participants(user_id);
+
+-- Optimized room structure lookups.
+CREATE INDEX IF NOT EXISTS idx_chat_rooms_parent_room_id 
+ON public.chat_rooms(parent_room_id);
+
+CREATE INDEX IF NOT EXISTS idx_chat_rooms_is_archived 
+ON public.chat_rooms(is_archived);
+
+-- 5. ACTIVITY & CLEANUP LOOKUPS
+-- Speeds up "User Dismissals" to keep the inbox clean.
+CREATE INDEX IF NOT EXISTS idx_user_dismissals_lookup 
+ON public.user_dismissals(user_id, item_type, item_id);
+
+-- Speeds up activity log dashboard for admins.
+CREATE INDEX IF NOT EXISTS idx_silo_activity_logs_user_created 
+ON public.silo_activity_logs(user_id, created_at DESC);
+
+-- 6. CONTENT SHARING
+-- Speeds up tracking of shared/forwarded messages across Silos.
+CREATE INDEX IF NOT EXISTS idx_shared_content_target_room_id 
+ON public.shared_content(target_room_id);
+
+CREATE INDEX IF NOT EXISTS idx_shared_content_shared_by 
+ON public.shared_content(shared_by_user_id);
+
