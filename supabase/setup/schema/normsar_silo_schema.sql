@@ -14,18 +14,10 @@ CREATE EXTENSION IF NOT EXISTS pg_cron WITH SCHEMA pg_catalog;
 COMMENT ON EXTENSION pg_cron IS 'Job scheduler for PostgreSQL';
 
 --
--- Name: extensions; Type: SCHEMA; Schema: -; Owner: -
---
-
-CREATE SCHEMA extensions;
-
-
---
 -- Name: pg_net; Type: EXTENSION; Schema: -; Owner: -
 --
 
 CREATE EXTENSION IF NOT EXISTS pg_net WITH SCHEMA extensions;
-
 
 --
 -- Name: EXTENSION pg_net; Type: COMMENT; Schema: -; Owner: -
@@ -33,40 +25,11 @@ CREATE EXTENSION IF NOT EXISTS pg_net WITH SCHEMA extensions;
 
 COMMENT ON EXTENSION pg_net IS 'Async HTTP';
 
-
---
--- Name: pgbouncer; Type: SCHEMA; Schema: -; Owner: -
---
-
-CREATE SCHEMA pgbouncer;
-
-
 --
 -- Name: private; Type: SCHEMA; Schema: -; Owner: -
 --
 
 CREATE SCHEMA private;
-
---
--- Name: supabase_functions; Type: SCHEMA; Schema: -; Owner: -
---
-
-CREATE SCHEMA supabase_functions;
-
-
---
--- Name: pg_stat_statements; Type: EXTENSION; Schema: -; Owner: -
---
-
-CREATE EXTENSION IF NOT EXISTS pg_stat_statements WITH SCHEMA extensions;
-
-
---
--- Name: EXTENSION pg_stat_statements; Type: COMMENT; Schema: -; Owner: -
---
-
-COMMENT ON EXTENSION pg_stat_statements IS 'track planning and execution statistics of all SQL statements executed';
-
 
 --
 -- Name: pgcrypto; Type: EXTENSION; Schema: -; Owner: -
