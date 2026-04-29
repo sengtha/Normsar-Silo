@@ -828,6 +828,16 @@ CREATE TABLE public.profiles (
     CONSTRAINT profiles_username_len_check CHECK (((username IS NULL) OR ((char_length(username) >= 1) AND (char_length(username) <= 30))))
 );
 
+-- Insert Normsar AI System Profile
+-- Essential for system-level notifications and AI interactions.
+INSERT INTO public.profiles (id, username, full_name, display_name, avatar_url)
+VALUES (
+    '00000000-0000-0000-0000-000000000000', 
+    'normsar', 
+    'Normsar AI', 
+    'Normsar',
+    'https://cdn.normsar.io/official/ai.png'
+) ON CONFLICT (id) DO UPDATE SET avatar_url = EXCLUDED.avatar_url;
 
 --
 -- Name: proposal_votes; Type: TABLE; Schema: public; Owner: -
@@ -1892,6 +1902,4 @@ CREATE POLICY "Valid token holders can view files" ON storage.objects FOR SELECT
 --
 -- PostgreSQL database dump complete
 --
-
-\unrestrict a7LtACsiDUhlOknVuDPS4FzPHUpfKSFxmJgwpbutwtgv3BaraaN7fnJHr322EtR
 
