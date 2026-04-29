@@ -2,7 +2,7 @@
 
 Welcome to your **Personal Vault**! By default, the Normsar Hub allows you to send text messages and optimized photos. However, to unlock the full power of sovereign messaging—including unrestricted file sharing, high-res photos, and voice chats—you can connect your own cloud storage. 
 
-We utilize **Cloudflare R2** because it offers a generous free tier (10 GB of free storage per month) and perfectly aligns with our vision of you owning your data. 
+We utilize **Cloudflare R2** because it offers a generous **free tier (10 GB of free storage per month)** and perfectly aligns with our vision of you **owning your data**. 
 
 Follow the steps below to configure your R2 bucket and fill out the form in your Normsar Profile.
 
