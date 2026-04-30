@@ -995,6 +995,57 @@ BEGIN
 END;
 $$;
 
+-- TRIGGER
+
+-- chat_rooms
+-- Automatically adds the creator as an admin when a new room is created
+CREATE TRIGGER on_room_created 
+  AFTER INSERT ON public.chat_rooms 
+  FOR EACH ROW EXECUTE FUNCTION private.handle_new_room_admin();
+
+-- Updates the 'updated_at' column whenever room details change
+CREATE TRIGGER set_chat_rooms_updated_at 
+  BEFORE UPDATE ON public.chat_rooms 
+  FOR EACH ROW EXECUTE FUNCTION public.handle_updated_at();
+
+-- Prevents disabling E2E encryption or Personal Vault status once enabled
+CREATE TRIGGER trigger_prevent_downgrading_security 
+  BEFORE UPDATE ON public.chat_rooms 
+  FOR EACH ROW EXECUTE FUNCTION private.prevent_downgrading_security();
+
+-- chat_messages
+-- Cleans up files in the storage bucket when a message is deleted
+CREATE TRIGGER trg_delete_chat_message_attachments 
+  AFTER DELETE ON public.chat_messages 
+  FOR EACH ROW EXECUTE FUNCTION private.delete_chat_message_attachments();
+
+-- Logs a "Sent Message" action to the silo activity logs
+CREATE TRIGGER trigger_log_new_message 
+  AFTER INSERT ON public.chat_messages 
+  FOR EACH ROW EXECUTE FUNCTION private.log_silo_activity('Sent Message');
+
+-- Bumps the 'updated_at' timestamp on the parent chat room when a new message is sent
+CREATE TRIGGER trigger_update_room_timestamp 
+  AFTER INSERT ON public.chat_messages 
+  FOR EACH ROW EXECUTE FUNCTION public.update_chat_room_timestamp();
+
+-- room_participants
+-- Ensures only Admins/Mods can alter participant statuses/roles safely
+CREATE TRIGGER room_participants_update_guard 
+  BEFORE UPDATE ON public.room_participants 
+  FOR EACH ROW EXECUTE FUNCTION private.enforce_room_participant_update();
+
+-- Automatically toggles the `is_direct_message` flag if a 3rd person joins or leaves
+CREATE TRIGGER trigger_auto_toggle_dm_to_group 
+  AFTER INSERT OR DELETE OR UPDATE OF status ON public.room_participants 
+  FOR EACH ROW EXECUTE FUNCTION private.auto_toggle_dm_to_group();
+
+--proposal_votes
+-- Automatically executes a creator transfer if a governance proposal reaches the required 'yes' votes
+CREATE TRIGGER trigger_auto_execute_creator_transfer 
+  AFTER INSERT ON public.proposal_votes 
+  FOR EACH ROW EXECUTE FUNCTION private.auto_execute_creator_transfer();
+
 -- ============================================================================
 -- NORMSAR SILO: PRODUCTION PERFORMANCE INDEXES
 -- Purpose: Optimized for AI Search, Real-time Messaging, and DAO Governance.
