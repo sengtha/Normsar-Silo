@@ -361,317 +361,105 @@ ALTER TABLE public.ai_briefing_logs ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.silo_activity_logs ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.user_dismissals ENABLE ROW LEVEL SECURITY;
 
---
--- Profiles RLS Policies
---
+-- Chat_room
+CREATE POLICY "Admins and Mods can update rooms" ON public.chat_rooms FOR UPDATE TO authenticated USING ((EXISTS ( SELECT 1 FROM public.room_participants WHERE ((room_participants.room_id = chat_rooms.id) AND (room_participants.user_id = auth.uid()) AND ((room_participants.role)::text = ANY ((ARRAY['admin'::character varying, 'moderator'::character varying])::text[]))))))[cite: 2];
 
-CREATE POLICY "Public profiles are viewable by everyone" ON public.profiles
-    FOR SELECT
-    USING (true);
+CREATE POLICY "Allow public to view public rooms" ON public.chat_rooms FOR SELECT TO anon USING ((is_public = true))[cite: 2];
 
-CREATE POLICY "Users can update their own profile" ON public.profiles
-    FOR UPDATE
-    USING (auth.uid() = id)
-    WITH CHECK (auth.uid() = id);
+CREATE POLICY "Authenticated users can create rooms" ON public.chat_rooms FOR INSERT TO authenticated WITH CHECK ((auth.uid() IS NOT NULL))[cite: 2];
 
---
--- Chat Rooms RLS Policies
---
+CREATE POLICY "Only Admins can delete rooms" ON public.chat_rooms FOR DELETE TO authenticated USING ((EXISTS ( SELECT 1 FROM public.room_participants WHERE ((room_participants.room_id = chat_rooms.id) AND (room_participants.user_id = auth.uid()) AND ((room_participants.role)::text = 'admin'::text)))))[cite: 2];
 
-CREATE POLICY "Users can view rooms they are a participant of" ON public.chat_rooms
-    FOR SELECT
-    USING (
-        is_public = true
-        OR EXISTS (
-            SELECT 1 FROM public.room_participants
-            WHERE room_participants.room_id = chat_rooms.id
-            AND room_participants.user_id = auth.uid()
-            AND room_participants.status = 'active'
-        )
-    );
+CREATE POLICY chat_rooms_select_stable ON public.chat_rooms FOR SELECT TO authenticated USING (((created_by = ( SELECT auth.uid() AS uid)) OR (EXISTS ( SELECT 1 FROM public.room_participants WHERE ((room_participants.room_id = chat_rooms.id) AND (room_participants.user_id = ( SELECT auth.uid() AS uid)) AND (room_participants.status = 'active'::text))))))[cite: 2];
 
-CREATE POLICY "Room creators can create rooms" ON public.chat_rooms
-    FOR INSERT
-    WITH CHECK (auth.uid() IS NOT NULL);
+-- chat_messages
+CREATE POLICY "Allow admins and mods to pin messages" ON public.chat_messages FOR UPDATE TO authenticated USING ((EXISTS ( SELECT 1 FROM public.room_participants WHERE ((room_participants.room_id = chat_messages.room_id) AND (room_participants.user_id = auth.uid()) AND ((room_participants.role)::text = ANY ((ARRAY['admin'::character varying, 'moderator'::character varying])::text[]))))))[cite: 2];
 
-CREATE POLICY "Room admins can update their rooms" ON public.chat_rooms
-    FOR UPDATE
-    USING (
-        created_by = auth.uid()
-        OR EXISTS (
-            SELECT 1 FROM public.room_participants
-            WHERE room_participants.room_id = chat_rooms.id
-            AND room_participants.user_id = auth.uid()
-            AND room_participants.role = 'admin'
-        )
-    );
+CREATE POLICY "Allow public to view messages in public rooms" ON public.chat_messages FOR SELECT TO anon USING ((EXISTS ( SELECT 1 FROM public.chat_rooms WHERE ((chat_rooms.id = chat_messages.room_id) AND (chat_rooms.is_public = true)))))[cite: 2];
 
---
--- Chat Messages RLS Policies
---
+CREATE POLICY "Authors can edit their own messages" ON public.chat_messages FOR UPDATE TO authenticated USING ((user_id = auth.uid())) WITH CHECK ((user_id = auth.uid()))[cite: 2];
 
-CREATE POLICY "Users can view messages in rooms they belong to" ON public.chat_messages
-    FOR SELECT
-    USING (
-        EXISTS (
-            SELECT 1 FROM public.room_participants
-            WHERE room_participants.room_id = chat_messages.room_id
-            AND room_participants.user_id = auth.uid()
-            AND room_participants.status = 'active'
-        )
-    );
+CREATE POLICY "Authors or Admins/Mods can delete messages" ON public.chat_messages FOR DELETE TO authenticated USING (((user_id = auth.uid()) OR (EXISTS ( SELECT 1 FROM public.room_participants WHERE ((room_participants.room_id = chat_messages.room_id) AND (room_participants.user_id = auth.uid()) AND ((room_participants.role)::text = ANY ((ARRAY['admin'::character varying, 'moderator'::character varying])::text[])))))))[cite: 2];
 
-CREATE POLICY "Users can insert messages in rooms they belong to" ON public.chat_messages
-    FOR INSERT
-    WITH CHECK (
-        auth.uid() = user_id
-        AND EXISTS (
-            SELECT 1 FROM public.room_participants
-            WHERE room_participants.room_id = chat_messages.room_id
-            AND room_participants.user_id = auth.uid()
-            AND room_participants.status = 'active'
-        )
-    );
+CREATE POLICY "Messages viewable by participants or if public" ON public.chat_messages FOR SELECT TO authenticated USING (((EXISTS ( SELECT 1 FROM public.chat_rooms WHERE ((chat_rooms.id = chat_messages.room_id) AND (chat_rooms.is_public = true)))) OR (EXISTS ( SELECT 1 FROM public.room_participants WHERE ((room_participants.room_id = chat_messages.room_id) AND (room_participants.user_id = auth.uid()))))))[cite: 2];
 
-CREATE POLICY "Users can update their own messages" ON public.chat_messages
-    FOR UPDATE
-    USING (auth.uid() = user_id);
+CREATE POLICY "Only participants can send messages" ON public.chat_messages FOR INSERT TO authenticated WITH CHECK ((EXISTS ( SELECT 1 FROM public.room_participants WHERE ((room_participants.room_id = chat_messages.room_id) AND (room_participants.user_id = auth.uid())))))[cite: 2];
 
-CREATE POLICY "Users can delete their own messages" ON public.chat_messages
-    FOR DELETE
-    USING (auth.uid() = user_id);
+--room_participants
+CREATE POLICY "Admins and Mods can update participants" ON public.room_participants FOR UPDATE TO authenticated USING ((EXISTS ( SELECT 1 FROM public.room_participants rp WHERE ((rp.room_id = room_participants.room_id) AND (rp.user_id = auth.uid()) AND ((rp.role)::text = ANY ((ARRAY['admin'::character varying, 'moderator'::character varying])::text[]))))))[cite: 2];
 
---
--- Room Participants RLS Policies
---
+CREATE POLICY "Leave room or Admins/Mods can kick" ON public.room_participants FOR DELETE TO authenticated USING (((user_id = auth.uid()) OR (public.is_room_admin_or_mod(room_id) AND (((EXISTS ( SELECT 1 FROM public.room_participants rp_self WHERE ((rp_self.room_id = room_participants.room_id) AND (rp_self.user_id = auth.uid()) AND ((rp_self.role)::text = 'admin'::text)))) AND (user_id <> ( SELECT cr.created_by FROM public.chat_rooms cr WHERE (cr.id = room_participants.room_id)))) OR ((NOT (EXISTS ( SELECT 1 FROM public.room_participants rp_self WHERE ((rp_self.room_id = room_participants.room_id) AND (rp_self.user_id = auth.uid()) AND ((rp_self.role)::text = 'admin'::text))))) AND ((role)::text = 'member'::text))) AND (NOT (EXISTS ( SELECT 1 FROM public.governance_proposals gp WHERE ((gp.room_id = room_participants.room_id) AND (gp.nominee_user_id = room_participants.user_id) AND (gp.status = 'active'::text))))))))[cite: 2];
 
-CREATE POLICY "Users can view participants in rooms they belong to" ON public.room_participants
-    FOR SELECT
-    USING (
-        EXISTS (
-            SELECT 1 FROM public.room_participants rp2
-            WHERE rp2.room_id = room_participants.room_id
-            AND rp2.user_id = auth.uid()
-            AND rp2.status = 'active'
-        )
-    );
+CREATE POLICY "Only Admins and Mods can add participants" ON public.room_participants FOR INSERT TO authenticated WITH CHECK (public.is_room_admin_or_mod(room_id))[cite: 2];
 
-CREATE POLICY "Room admins can manage participants" ON public.room_participants
-    FOR UPDATE
-    USING (
-        EXISTS (
-            SELECT 1 FROM public.room_participants rp
-            WHERE rp.room_id = room_participants.room_id
-            AND rp.user_id = auth.uid()
-            AND rp.role = 'admin'
-        )
-    );
+CREATE POLICY "View room participants" ON public.room_participants FOR SELECT TO authenticated USING ((public.is_room_admin_or_mod(room_id) OR ((status = 'active'::text) AND public.is_room_member(room_id)) OR (user_id = auth.uid())))[cite: 2];
 
-CREATE POLICY "Users can leave rooms" ON public.room_participants
-    FOR DELETE
-    USING (auth.uid() = user_id);
+-- profiles
+CREATE POLICY "Allow public to view profiles of active public participants" ON public.profiles FOR SELECT TO anon USING ((EXISTS ( SELECT 1 FROM (public.chat_messages JOIN public.chat_rooms ON ((chat_rooms.id = chat_messages.room_id))) WHERE ((chat_messages.user_id = profiles.id) AND (chat_rooms.is_public = true)))))[cite: 2];
 
---
--- Message Reactions RLS Policies
---
+CREATE POLICY "Users can insert their own profile" ON public.profiles FOR INSERT TO authenticated WITH CHECK ((id = auth.uid()))[cite: 2];
 
-CREATE POLICY "Users can view reactions in accessible messages" ON public.message_reactions
-    FOR SELECT
-    USING (
-        EXISTS (
-            SELECT 1 FROM public.chat_messages m
-            WHERE m.id = message_reactions.message_id
-            AND EXISTS (
-                SELECT 1 FROM public.room_participants
-                WHERE room_participants.room_id = m.room_id
-                AND room_participants.user_id = auth.uid()
-                AND room_participants.status = 'active'
-            )
-        )
-    );
+CREATE POLICY "Users can update their own profile" ON public.profiles FOR UPDATE TO authenticated USING ((id = auth.uid())) WITH CHECK ((id = auth.uid()))[cite: 2];
 
-CREATE POLICY "Users can add reactions to messages" ON public.message_reactions
-    FOR INSERT
-    WITH CHECK (
-        auth.uid() = user_id
-        AND EXISTS (
-            SELECT 1 FROM public.chat_messages m
-            WHERE m.id = message_reactions.message_id
-            AND EXISTS (
-                SELECT 1 FROM public.room_participants
-                WHERE room_participants.room_id = m.room_id
-                AND room_participants.user_id = auth.uid()
-                AND room_participants.status = 'active'
-            )
-        )
-    );
+CREATE POLICY "Valid token holders can read all profiles" ON public.profiles FOR SELECT TO authenticated USING (((auth.jwt() ->> 'sub'::text) IS NOT NULL))[cite: 2];
 
-CREATE POLICY "Users can remove their own reactions" ON public.message_reactions
-    FOR DELETE
-    USING (auth.uid() = user_id);
+-- doc_segments (AI RAG)
+CREATE POLICY doc_segments_insert_own ON public.doc_segments FOR INSERT TO authenticated WITH CHECK (((fed_by_user_id = auth.uid()) AND (EXISTS ( SELECT 1 FROM public.room_participants rp WHERE ((rp.room_id = doc_segments.room_id) AND (rp.user_id = auth.uid()) AND (rp.status = 'active'::text))))))[cite: 2];
 
---
--- Doc Segments RLS Policies
---
+CREATE POLICY doc_segments_select_room_members ON public.doc_segments FOR SELECT TO authenticated USING ((EXISTS ( SELECT 1 FROM public.room_participants rp WHERE ((rp.room_id = doc_segments.room_id) AND (rp.user_id = auth.uid()) AND (rp.status = 'active'::text)))))[cite: 2];
 
-CREATE POLICY "Users can view doc segments in their rooms" ON public.doc_segments
-    FOR SELECT
-    USING (
-        EXISTS (
-            SELECT 1 FROM public.room_participants
-            WHERE room_participants.room_id = doc_segments.room_id
-            AND room_participants.user_id = auth.uid()
-            AND room_participants.status = 'active'
-        )
-    );
+-- governance_proposals & proposal_votes
+CREATE POLICY "Users can create proposals in their active rooms" ON public.governance_proposals FOR INSERT TO authenticated WITH CHECK (((proposed_by = auth.uid()) AND (EXISTS ( SELECT 1 FROM public.room_participants rp WHERE ((rp.room_id = governance_proposals.room_id) AND (rp.user_id = auth.uid()) AND (rp.status = 'active'::text))))))[cite: 2];
 
-CREATE POLICY "Users can insert doc segments in their rooms" ON public.doc_segments
-    FOR INSERT
-    WITH CHECK (
-        EXISTS (
-            SELECT 1 FROM public.room_participants
-            WHERE room_participants.room_id = doc_segments.room_id
-            AND room_participants.user_id = auth.uid()
-            AND room_participants.status = 'active'
-        )
-    );
+CREATE POLICY "Users can view proposals in their active rooms" ON public.governance_proposals FOR SELECT TO authenticated USING ((EXISTS ( SELECT 1 FROM public.room_participants rp WHERE ((rp.room_id = governance_proposals.room_id) AND (rp.user_id = auth.uid()) AND (rp.status = 'active'::text)))))[cite: 2];
 
---
--- Governance Proposals RLS Policies
---
+CREATE POLICY "Admins and Mods can cast votes on active proposals" ON public.proposal_votes FOR INSERT TO authenticated WITH CHECK (((user_id = auth.uid()) AND (EXISTS ( SELECT 1 FROM (public.governance_proposals gp JOIN public.room_participants rp ON ((rp.room_id = gp.room_id))) WHERE ((gp.id = proposal_votes.proposal_id) AND (rp.user_id = auth.uid()) AND (rp.status = 'active'::text) AND ((rp.role)::text = ANY ((ARRAY['admin'::character varying, 'moderator'::character varying])::text[])) AND (gp.status = 'pending'::text))))))[cite: 2];
 
-CREATE POLICY "Users can view proposals in their rooms" ON public.governance_proposals
-    FOR SELECT
-    USING (
-        EXISTS (
-            SELECT 1 FROM public.room_participants
-            WHERE room_participants.room_id = governance_proposals.room_id
-            AND room_participants.user_id = auth.uid()
-            AND room_participants.status = 'active'
-        )
-    );
+CREATE POLICY "Users can update their own votes" ON public.proposal_votes FOR UPDATE TO authenticated USING ((user_id = auth.uid())) WITH CHECK ((user_id = auth.uid()))[cite: 2];
 
-CREATE POLICY "Users can create proposals in their rooms" ON public.governance_proposals
-    FOR INSERT
-    WITH CHECK (
-        auth.uid() = proposed_by
-        AND EXISTS (
-            SELECT 1 FROM public.room_participants
-            WHERE room_participants.room_id = governance_proposals.room_id
-            AND room_participants.user_id = auth.uid()
-            AND room_participants.status = 'active'
-        )
-    );
+CREATE POLICY "Users can view votes for proposals in their active rooms" ON public.proposal_votes FOR SELECT TO authenticated USING ((EXISTS ( SELECT 1 FROM (public.governance_proposals rgp JOIN public.room_participants rp ON ((rgp.room_id = rp.room_id))) WHERE ((rgp.id = proposal_votes.proposal_id) AND (rp.user_id = auth.uid()) AND (rp.status = 'active'::text)))))[cite: 2];
 
---
--- Proposal Votes RLS Policies
---
+-- room_keys (End-to-End Encryption)
+CREATE POLICY "Participants can insert room keys for Silos only" ON public.room_keys FOR INSERT TO authenticated WITH CHECK ((EXISTS ( SELECT 1 FROM (public.room_participants rp JOIN public.chat_rooms cr ON ((rp.room_id = cr.id))) WHERE ((rp.room_id = room_keys.room_id) AND (rp.user_id = auth.uid()) AND (cr.is_e2ee = true)))))[cite: 2];
 
-CREATE POLICY "Users can view votes on proposals in their rooms" ON public.proposal_votes
-    FOR SELECT
-    USING (
-        EXISTS (
-            SELECT 1 FROM public.governance_proposals gp
-            WHERE gp.id = proposal_votes.proposal_id
-            AND EXISTS (
-                SELECT 1 FROM public.room_participants
-                WHERE room_participants.room_id = gp.room_id
-                AND room_participants.user_id = auth.uid()
-                AND room_participants.status = 'active'
-            )
-        )
-    );
+CREATE POLICY "Participants can view room keys in Silos" ON public.room_keys FOR SELECT TO authenticated USING ((EXISTS ( SELECT 1 FROM (public.room_participants rp JOIN public.chat_rooms cr ON ((rp.room_id = cr.id))) WHERE ((rp.room_id = room_keys.room_id) AND (rp.user_id = auth.uid()) AND (cr.is_e2ee = true)))))[cite: 2];
 
-CREATE POLICY "Users can vote on proposals in their rooms" ON public.proposal_votes
-    FOR INSERT
-    WITH CHECK (
-        auth.uid() = user_id
-        AND EXISTS (
-            SELECT 1 FROM public.governance_proposals gp
-            WHERE gp.id = proposal_votes.proposal_id
-            AND EXISTS (
-                SELECT 1 FROM public.room_participants
-                WHERE room_participants.room_id = gp.room_id
-                AND room_participants.user_id = auth.uid()
-                AND room_participants.status = 'active'
-            )
-        )
-    );
+-- shared_content
+CREATE POLICY "Anyone can insert a share link" ON public.shared_content FOR INSERT TO authenticated WITH CHECK ((shared_by_user_id = COALESCE(auth.uid(), ((auth.jwt() ->> 'sub'::text))::uuid)))[cite: 2];
 
---
--- AI Briefing Logs RLS Policies
---
+CREATE POLICY "Public Read Access" ON public.shared_content FOR SELECT TO authenticated USING (true)[cite: 2];
 
-CREATE POLICY "Users can view their own briefing logs" ON public.ai_briefing_logs
-    FOR SELECT
-    USING (auth.uid() = user_id);
+CREATE POLICY "Users can delete their own share links" ON public.shared_content FOR DELETE TO authenticated USING ((shared_by_user_id = COALESCE(auth.uid(), ((auth.jwt() ->> 'sub'::text))::uuid)))[cite: 2];
 
-CREATE POLICY "Users can create their own briefing logs" ON public.ai_briefing_logs
-    FOR INSERT
-    WITH CHECK (auth.uid() = user_id);
+-- message_reactions
+CREATE POLICY "Users can delete their own reactions" ON public.message_reactions FOR DELETE TO authenticated USING ((user_id = auth.uid()))[cite: 2];
 
---
--- Silo Activity Logs RLS Policies
---
+CREATE POLICY "Users can insert their own reactions" ON public.message_reactions FOR INSERT TO authenticated WITH CHECK ((user_id = auth.uid()))[cite: 2];
 
-CREATE POLICY "Users can view their own activity logs" ON public.silo_activity_logs
-    FOR SELECT
-    USING (auth.uid() = user_id);
+CREATE POLICY "Users can update their own reactions" ON public.message_reactions FOR UPDATE TO authenticated USING ((user_id = auth.uid())) WITH CHECK ((user_id = auth.uid()))[cite: 2];
 
-CREATE POLICY "Users can create their own activity logs" ON public.silo_activity_logs
-    FOR INSERT
-    WITH CHECK (auth.uid() = user_id);
+CREATE POLICY "Valid token holders can read reactions" ON public.message_reactions FOR SELECT TO authenticated USING (((auth.jwt() ->> 'sub'::text) IS NOT NULL))[cite: 2];
 
---
--- User Dismissals RLS Policies
---
+-- silo_activity_logs & ai_briefing_logs
+CREATE POLICY "Users can insert own logs" ON public.silo_activity_logs FOR INSERT TO authenticated WITH CHECK ((user_id = auth.uid()))[cite: 2];
 
-CREATE POLICY "Users can view their own dismissals" ON public.user_dismissals
-    FOR SELECT
-    USING (auth.uid() = user_id);
+CREATE POLICY "Users can insert own silo logs" ON public.silo_activity_logs FOR INSERT TO authenticated WITH CHECK ((user_id = auth.uid()))[cite: 2];
 
-CREATE POLICY "Users can manage their own dismissals" ON public.user_dismissals
-    FOR INSERT
-    WITH CHECK (auth.uid() = user_id);
+CREATE POLICY "Users can read own silo logs" ON public.silo_activity_logs FOR SELECT TO authenticated USING ((user_id = auth.uid()))[cite: 2];
 
-CREATE POLICY "Users can delete their own dismissals" ON public.user_dismissals
-    FOR DELETE
-    USING (auth.uid() = user_id);
+CREATE POLICY "Users can insert own logs" ON public.ai_briefing_logs FOR INSERT TO authenticated WITH CHECK ((auth.uid() = user_id))[cite: 2];
 
---
--- Shared Content RLS Policies
---
+CREATE POLICY "Users can only see their own briefings" ON public.ai_briefing_logs FOR SELECT TO authenticated USING ((auth.uid() = user_id))[cite: 2];
 
-CREATE POLICY "Users can view shared content from accessible messages" ON public.shared_content
-    FOR SELECT
-    USING (
-        EXISTS (
-            SELECT 1 FROM public.chat_messages m
-            WHERE m.id = shared_content.original_message_id
-            AND EXISTS (
-                SELECT 1 FROM public.room_participants
-                WHERE room_participants.room_id = m.room_id
-                AND room_participants.user_id = auth.uid()
-                AND room_participants.status = 'active'
-            )
-        )
-    );
+CREATE POLICY "Users can view own logs" ON public.ai_briefing_logs FOR SELECT TO authenticated USING ((auth.uid() = user_id))[cite: 2];
 
-CREATE POLICY "Users can share messages from their rooms" ON public.shared_content
-    FOR INSERT
-    WITH CHECK (
-        auth.uid() = shared_by_user_id
-        AND EXISTS (
-            SELECT 1 FROM public.chat_messages m
-            WHERE m.id = shared_content.original_message_id
-            AND EXISTS (
-                SELECT 1 FROM public.room_participants
-                WHERE room_participants.room_id = m.room_id
-                AND room_participants.user_id = auth.uid()
-                AND room_participants.status = 'active'
-            )
-        )
-    );
+-- user_dismissals
+CREATE POLICY "Users can only insert their own dismissals" ON public.user_dismissals FOR INSERT TO authenticated WITH CHECK ((user_id = auth.uid()))[cite: 2];
+
+CREATE POLICY "Users can read their own dismissals" ON public.user_dismissals FOR SELECT TO authenticated USING ((user_id = auth.uid()))[cite: 2];
+
+
+
 
 --
 -- Private Functions
