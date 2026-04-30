@@ -31,9 +31,11 @@ Deploy the logic required for AI processing and system automation.
 3. Create a function using the exact name found in the `supabase/setup/functions` folder.
 4. Copy the code from the corresponding `index.ts` file and save it in the dashboard editor.
 
+Set **Verify JWT with legacy secret** to **OFF** for each function. 
+
 ### 4. Register your Silo
 Link your infrastructure to the Normsar ecosystem.
 1. Go to [https://normsar.io/silo-manager](https://normsar.io/silo-manager) (Sign-in required).
-2. Obtain your **Project URL** and **Anon Key** from **Project Settings** -> **API** in your Supabase Dashboard.
+2. Obtain your **Project URL** and **Anon Key** from **Project Search** in your Supabase Dashboard.
 3. Input these credentials into the registration form.
 4. Click **Register** to finalize your sovereign node.
