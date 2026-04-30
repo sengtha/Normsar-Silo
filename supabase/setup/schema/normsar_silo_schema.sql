@@ -201,21 +201,32 @@ CREATE TABLE public.user_dismissals (
 --
 -- Primary Keys
 --
-
 ALTER TABLE ONLY public.ai_briefing_logs
     ADD CONSTRAINT ai_briefing_logs_pkey PRIMARY KEY (id);
+
+ALTER TABLE ONLY public.ai_briefing_logs
+    ADD CONSTRAINT unique_user_briefing_day UNIQUE (user_id, briefing_date);
 
 ALTER TABLE ONLY public.chat_messages
     ADD CONSTRAINT chat_messages_pkey PRIMARY KEY (id);
 
+ALTER TABLE ONLY public.chat_rooms
+    ADD CONSTRAINT rooms_pkey PRIMARY KEY (id);
+
 ALTER TABLE ONLY public.doc_segments
     ADD CONSTRAINT doc_segments_pkey PRIMARY KEY (id);
+
+ALTER TABLE ONLY public.governance_proposals
+    ADD CONSTRAINT room_governance_proposals_pkey PRIMARY KEY (id);
 
 ALTER TABLE ONLY public.message_reactions
     ADD CONSTRAINT message_reactions_pkey PRIMARY KEY (id);
 
 ALTER TABLE ONLY public.message_reactions
     ADD CONSTRAINT message_reactions_message_id_user_id_emoji_key UNIQUE (message_id, user_id, emoji);
+
+ALTER TABLE ONLY public.message_reactions
+    ADD CONSTRAINT unique_user_message_emoji UNIQUE (message_id, user_id, emoji);
 
 ALTER TABLE ONLY public.profiles
     ADD CONSTRAINT profiles_pkey PRIMARY KEY (id);
@@ -226,11 +237,11 @@ ALTER TABLE ONLY public.profiles
 ALTER TABLE ONLY public.proposal_votes
     ADD CONSTRAINT proposal_votes_pkey PRIMARY KEY (proposal_id, user_id);
 
-ALTER TABLE ONLY public.governance_proposals
-    ADD CONSTRAINT room_governance_proposals_pkey PRIMARY KEY (id);
-
 ALTER TABLE ONLY public.room_keys
     ADD CONSTRAINT room_keys_pkey PRIMARY KEY (id);
+
+ALTER TABLE ONLY public.room_keys
+    ADD CONSTRAINT unique_room_version UNIQUE (room_id, version);
 
 ALTER TABLE ONLY public.room_participants
     ADD CONSTRAINT room_participants_pkey PRIMARY KEY (room_id, user_id);
@@ -238,27 +249,14 @@ ALTER TABLE ONLY public.room_participants
 ALTER TABLE ONLY public.shared_content
     ADD CONSTRAINT shared_content_pkey PRIMARY KEY (id);
 
+ALTER TABLE ONLY public.shared_content
+    ADD CONSTRAINT unique_share_per_user_room UNIQUE NULLS NOT DISTINCT (original_message_id, shared_by_user_id, target_room_id);
+
 ALTER TABLE ONLY public.silo_activity_logs
     ADD CONSTRAINT silo_activity_logs_pkey PRIMARY KEY (id);
 
 ALTER TABLE ONLY public.user_dismissals
     ADD CONSTRAINT user_dismissals_pkey PRIMARY KEY (user_id, item_id, item_type);
-
--- public.ai_briefing_logs
-ALTER TABLE ONLY public.ai_briefing_logs
-    ADD CONSTRAINT unique_user_briefing_day UNIQUE (user_id, briefing_date);
-
-ALTER TABLE ONLY public.message_reactions
-    ADD CONSTRAINT unique_user_message_emoji UNIQUE (message_id, user_id, emoji);
-
--- public.room_keys
-ALTER TABLE ONLY public.room_keys
-    ADD CONSTRAINT unique_room_version UNIQUE (room_id, version);
-
--- public.shared_content
-ALTER TABLE ONLY public.shared_content
-    ADD CONSTRAINT unique_share_per_user_room UNIQUE NULLS NOT DISTINCT (original_message_id, shared_by_user_id, target_room_id);
-
 
 -- Foreign Keys
 -- public.ai_briefing_logs
