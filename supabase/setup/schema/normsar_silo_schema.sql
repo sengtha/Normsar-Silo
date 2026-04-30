@@ -244,8 +244,23 @@ ALTER TABLE ONLY public.silo_activity_logs
 ALTER TABLE ONLY public.user_dismissals
     ADD CONSTRAINT user_dismissals_pkey PRIMARY KEY (user_id, item_id, item_type);
 
--- Foreign Keys
+-- public.ai_briefing_logs
+ALTER TABLE ONLY public.ai_briefing_logs
+    ADD CONSTRAINT unique_user_briefing_day UNIQUE (user_id, briefing_date);
 
+ALTER TABLE ONLY public.message_reactions
+    ADD CONSTRAINT unique_user_message_emoji UNIQUE (message_id, user_id, emoji);
+
+-- public.room_keys
+ALTER TABLE ONLY public.room_keys
+    ADD CONSTRAINT unique_room_version UNIQUE (room_id, version);
+
+-- public.shared_content
+ALTER TABLE ONLY public.shared_content
+    ADD CONSTRAINT unique_share_per_user_room UNIQUE NULLS NOT DISTINCT (original_message_id, shared_by_user_id, target_room_id);
+
+
+-- Foreign Keys
 -- public.ai_briefing_logs
 ALTER TABLE ONLY public.ai_briefing_logs
     ADD CONSTRAINT ai_briefing_logs_user_id_fkey FOREIGN KEY (user_id) REFERENCES public.profiles(id);
