@@ -244,6 +244,89 @@ ALTER TABLE ONLY public.silo_activity_logs
 ALTER TABLE ONLY public.user_dismissals
     ADD CONSTRAINT user_dismissals_pkey PRIMARY KEY (user_id, item_id, item_type);
 
+-- Foreign Keys
+
+-- public.ai_briefing_logs
+ALTER TABLE ONLY public.ai_briefing_logs
+    ADD CONSTRAINT ai_briefing_logs_user_id_fkey FOREIGN KEY (user_id) REFERENCES public.profiles(id);
+
+-- public.chat_messages
+ALTER TABLE ONLY public.chat_messages
+    ADD CONSTRAINT chat_messages_reply_to_message_id_fkey FOREIGN KEY (reply_to_message_id) REFERENCES public.chat_messages(id) ON DELETE SET NULL;
+
+ALTER TABLE ONLY public.chat_messages
+    ADD CONSTRAINT chat_messages_room_id_fkey FOREIGN KEY (room_id) REFERENCES public.chat_rooms(id) ON DELETE CASCADE;
+
+ALTER TABLE ONLY public.chat_messages
+    ADD CONSTRAINT chat_messages_user_id_fkey FOREIGN KEY (user_id) REFERENCES public.profiles(id) ON DELETE SET NULL;
+
+-- public.chat_rooms
+ALTER TABLE ONLY public.chat_rooms
+    ADD CONSTRAINT chat_rooms_parent_room_id_fkey FOREIGN KEY (parent_room_id) REFERENCES public.chat_rooms(id) ON DELETE SET NULL;
+
+-- public.doc_segments
+ALTER TABLE ONLY public.doc_segments
+    ADD CONSTRAINT doc_segments_fed_by_user_id_fkey FOREIGN KEY (fed_by_user_id) REFERENCES public.profiles(id);
+
+ALTER TABLE ONLY public.doc_segments
+    ADD CONSTRAINT doc_segments_room_id_fkey FOREIGN KEY (room_id) REFERENCES public.chat_rooms(id) ON DELETE CASCADE;
+
+ALTER TABLE ONLY public.doc_segments
+    ADD CONSTRAINT doc_segments_source_message_id_fkey FOREIGN KEY (source_message_id) REFERENCES public.chat_messages(id) ON DELETE CASCADE;
+
+-- public.governance_proposals
+ALTER TABLE ONLY public.governance_proposals
+    ADD CONSTRAINT fk_governance_nominee FOREIGN KEY (nominee_user_id) REFERENCES public.profiles(id);
+
+ALTER TABLE ONLY public.governance_proposals
+    ADD CONSTRAINT fk_governance_proposed_by FOREIGN KEY (proposed_by) REFERENCES public.profiles(id);
+
+ALTER TABLE ONLY public.governance_proposals
+    ADD CONSTRAINT room_governance_proposals_room_id_fkey FOREIGN KEY (room_id) REFERENCES public.chat_rooms(id) ON DELETE CASCADE;
+
+-- public.message_reactions
+ALTER TABLE ONLY public.message_reactions
+    ADD CONSTRAINT message_reactions_message_id_fkey FOREIGN KEY (message_id) REFERENCES public.chat_messages(id) ON DELETE CASCADE;
+
+ALTER TABLE ONLY public.message_reactions
+    ADD CONSTRAINT message_reactions_user_id_fkey FOREIGN KEY (user_id) REFERENCES public.profiles(id) ON DELETE CASCADE;
+
+-- public.proposal_votes
+ALTER TABLE ONLY public.proposal_votes
+    ADD CONSTRAINT proposal_votes_proposal_id_fkey FOREIGN KEY (proposal_id) REFERENCES public.governance_proposals(id) ON DELETE CASCADE;
+
+ALTER TABLE ONLY public.proposal_votes
+    ADD CONSTRAINT proposal_votes_user_id_fkey FOREIGN KEY (user_id) REFERENCES public.profiles(id) ON DELETE CASCADE;
+
+-- public.room_keys
+ALTER TABLE ONLY public.room_keys
+    ADD CONSTRAINT room_keys_room_id_fkey FOREIGN KEY (room_id) REFERENCES public.chat_rooms(id) ON DELETE CASCADE;
+
+-- public.room_participants
+ALTER TABLE ONLY public.room_participants
+    ADD CONSTRAINT room_participants_room_id_fkey FOREIGN KEY (room_id) REFERENCES public.chat_rooms(id) ON DELETE CASCADE;
+
+ALTER TABLE ONLY public.room_participants
+    ADD CONSTRAINT room_participants_user_id_fkey FOREIGN KEY (user_id) REFERENCES public.profiles(id) ON DELETE CASCADE;
+
+-- public.shared_content
+ALTER TABLE ONLY public.shared_content
+    ADD CONSTRAINT shared_content_original_author_id_fkey FOREIGN KEY (original_author_id) REFERENCES public.profiles(id);
+
+ALTER TABLE ONLY public.shared_content
+    ADD CONSTRAINT shared_content_original_message_id_fkey FOREIGN KEY (original_message_id) REFERENCES public.chat_messages(id) ON DELETE CASCADE;
+
+ALTER TABLE ONLY public.shared_content
+    ADD CONSTRAINT shared_content_shared_by_user_id_fkey FOREIGN KEY (shared_by_user_id) REFERENCES public.profiles(id);
+
+ALTER TABLE ONLY public.shared_content
+    ADD CONSTRAINT shared_content_target_room_id_fkey FOREIGN KEY (target_room_id) REFERENCES public.chat_rooms(id) ON DELETE CASCADE;
+
+-- public.user_dismissals
+ALTER TABLE ONLY public.user_dismissals
+    ADD CONSTRAINT user_dismissals_user_id_fkey FOREIGN KEY (user_id) REFERENCES public.profiles(id) ON DELETE CASCADE;
+
+
 --
 -- Row Level Security (RLS) Policies
 --
