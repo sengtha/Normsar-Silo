@@ -14,7 +14,7 @@ This guide walks you through deploying and registering your sovereign messaging 
 ## 🔒 Edge Function Secrets Overview
 
 To run the Silo Edge Functions properly, you must configure the following secrets in your Supabase project via Elestio. You can set these using:
-1. **Elestio File Explorer** – Create and upload a `keys.env` file
+1. **Elestio File Explorer** – Edit `keys.env` file
 2. **Supabase Dashboard** (accessible from Elestio) – Set secrets directly
 
 ### Required Secrets (Silo Core)
