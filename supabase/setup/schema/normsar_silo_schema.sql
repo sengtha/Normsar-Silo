@@ -1132,7 +1132,7 @@ SELECT cron.schedule(
   $$
 );
 -- Storage
-INSERT INTO storage.buckets (id, name, public) VALUES ('silo_uploads', 'silo_uploads', false);
+INSERT INTO storage.buckets (id, name, public) VALUES ('silo_uploads', 'silo_uploads', true);
 CREATE POLICY "Valid token holders can view files" ON storage.objects 
 FOR SELECT USING (
   (bucket_id = 'silo_uploads'::text) AND 
