@@ -458,53 +458,6 @@ BEGIN
 END;
 $$;
 
-
-CREATE FUNCTION private.delete_chat_message_attachments() RETURNS trigger
-    LANGUAGE plpgsql SECURITY DEFINER
-    AS $$
-DECLARE
-  v_elem jsonb;
-  v_path text;
-BEGIN
-  -- attachments is expected to be a JSON array
-  IF OLD.attachments IS NULL OR OLD.attachments = '[]'::jsonb THEN
-    RETURN OLD;
-  END IF;
-
-  FOR v_elem IN
-    SELECT value
-    FROM jsonb_array_elements(OLD.attachments) AS t(value)
-  LOOP
-    v_path := NULL;
-
-    IF jsonb_typeof(v_elem) = 'string' THEN
-      v_path := v_elem #>> '{}';
-    ELSIF jsonb_typeof(v_elem) = 'object' THEN
-      -- Support a few common shapes
-      v_path := COALESCE(
-        v_elem->>'path',
-        v_elem->>'file_path',
-        v_elem->>'storage_path',
-        v_elem->>'object',
-        v_elem->>'name'
-      );
-    END IF;
-
-    v_path := NULLIF(BTRIM(v_path), '');
-
-    IF v_path IS NOT NULL THEN
-      -- Bucket used by this project
-      DELETE FROM storage.objects
-      WHERE bucket_id = 'silo_uploads'
-        AND name = v_path;
-    END IF;
-  END LOOP;
-
-  RETURN OLD;
-END;
-$$;
-
-
 CREATE FUNCTION private.enforce_room_participant_update() RETURNS trigger
     LANGUAGE plpgsql SECURITY DEFINER
     SET search_path TO 'pg_catalog', 'public', 'auth'
@@ -892,12 +845,6 @@ CREATE TRIGGER set_chat_rooms_updated_at
 CREATE TRIGGER trigger_prevent_downgrading_security 
   BEFORE UPDATE ON public.chat_rooms 
   FOR EACH ROW EXECUTE FUNCTION private.prevent_downgrading_security();
-
--- chat_messages
--- Cleans up files in the storage bucket when a message is deleted
-CREATE TRIGGER trg_delete_chat_message_attachments 
-  AFTER DELETE ON public.chat_messages 
-  FOR EACH ROW EXECUTE FUNCTION private.delete_chat_message_attachments();
 
 -- Logs a "Sent Message" action to the silo activity logs
 CREATE TRIGGER trigger_log_new_message 
