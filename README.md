@@ -5,6 +5,45 @@ The self-hosted, decentralized data node for Normsar Sovereign Messaging. Deploy
 
 Follow these steps to deploy and register your own sovereign messaging node.
 
+## Edge Function Secrets
+
+To run the Silo Edge Functions properly, you must configure the following secrets in your Supabase project. 
+
+You can set these via the Supabase Dashboard (Settings > Edge Functions) or using the Supabase CLI:
+`supabase secrets set VARIABLE_NAME=value`
+
+### 🔒 Required Secrets (Silo Core)
+These secrets are mandatory for the Silo to function and authenticate correctly.
+
+| Variable | Description |
+| :--- | :--- |
+| `SUPABASE_URL` | The REST API URL of your Supabase project. |
+| `SUPABASE_ANON_KEY` | The anonymous public key for standard client requests. |
+| `SUPABASE_SERVICE_ROLE_KEY` | The admin key used to bypass Row Level Security (RLS). **Keep this secure.** |
+| `SILO_JWT_SECRET` | The secret used to sign and verify JSON Web Tokens (JWTs) for the Silo. |
+
+### 🤖 Optional: AI Integration
+Required only if you are enabling AI-assisted features.
+
+| Variable | Description |
+| :--- | :--- |
+| `GEMINI_API_KEY` | Your Google Gemini API key for AI functionalities. |
+
+### ☁️ Optional: Cloudflare Durable Objects
+Required only if you are using Cloudflare Durable Objects for state management or WebSockets.
+
+| Variable | Description |
+| :--- | :--- |
+| `CF_DO_SECRET_KEY` | The secret key used to securely authenticate with your Durable Object. |
+| `CF_DO_URL` | The endpoint URL where your Cloudflare Durable Object is hosted. |
+
+### 🔐 Optional: End-to-End Encryption (E2EE)
+Required only if you are implementing E2EE using the Lit Protocol network.
+
+| Variable | Description |
+| :--- | :--- |
+| `LIT_PKP_PUBLIC_KEY` | The Programmable Key Pair (PKP) public key for Lit Protocol. |
+| `LIT_API_KEY` | Your developer API key for accessing Lit Protocol services. |
 ---
 
 ### 1. Configure Edge Function Secrets
