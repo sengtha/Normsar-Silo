@@ -894,6 +894,22 @@ ALTER TABLE public.silo_activity_logs ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.user_dismissals ENABLE ROW LEVEL SECURITY;
 
 -- Chat_room
+create policy "Authenticated users can view non-private child rooms via parent membership"
+on public.chat_rooms
+for select
+to authenticated
+using (
+  is_private_topic = false
+  and parent_room_id is not null
+  and exists (
+    select 1
+    from public.room_participants rp
+    where rp.room_id = chat_rooms.parent_room_id
+      and rp.user_id = auth.uid()
+      and rp.status = 'active'
+  )
+);
+
 CREATE POLICY "Admins and Mods can update rooms" ON public.chat_rooms FOR UPDATE TO authenticated USING ((EXISTS ( SELECT 1 FROM public.room_participants WHERE ((room_participants.room_id = chat_rooms.id) AND (room_participants.user_id = auth.uid()) AND ((room_participants.role)::text = ANY ((ARRAY['admin'::character varying, 'moderator'::character varying])::text[]))))));
 
 CREATE POLICY "Allow public to view public rooms" ON public.chat_rooms FOR SELECT TO anon USING ((is_public = true));
