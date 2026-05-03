@@ -30,7 +30,7 @@ Required only if you are enabling AI-assisted features.
 | `GEMINI_API_KEY` | Your Google Gemini API key for AI functionalities. |
 
 ### ☁️ Optional: Cloudflare Durable Objects
-Required only if you are using Cloudflare Durable Objects for state management or WebSockets.
+Required only if you are using Cloudflare Durable Objects for state management or WebSockets. https://github.com/sengtha/Normsar-DO 
 
 | Variable | Description |
 | :--- | :--- |
