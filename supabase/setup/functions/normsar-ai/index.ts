@@ -117,7 +117,7 @@ Deno.serve(async (req: Request) => {
     }
 
     // 7. Insert the AI's response back into the Chat Room
-    const { error: insertError } = await supabase
+    const { data: aiMessage, error: insertError } = await supabase
       .from('chat_messages')
       .insert({
         room_id: roomId,
@@ -125,8 +125,56 @@ Deno.serve(async (req: Request) => {
         content: aiAnswer,
         reply_to_message_id: messageId || null,
       })
+      .select('*, profiles(full_name, avatar_url)')
+      .single()
 
     if (insertError) throw insertError
+
+    // 8. Publish the reply over the room's realtime transport. Realtime here
+    // is broadcast-based (send-message re-broadcasts inserts), so without
+    // this the AI answer never appears until the room is reloaded.
+    try {
+      const { data: roomInfo } = await supabase
+        .from('chat_rooms')
+        .select('websocket_transport')
+        .eq('id', roomId)
+        .maybeSingle()
+
+      if ((roomInfo?.websocket_transport ?? 'supabase') === 'cloudflare') {
+        let cfBaseUrl = Deno.env.get('CF_DO_URL')
+        const doSecretKey = Deno.env.get('CF_DO_SECRET_KEY')
+        if (!cfBaseUrl || !doSecretKey) {
+          throw new Error('Missing Cloudflare DO URL or Secret Key')
+        }
+        cfBaseUrl = cfBaseUrl.endsWith('/') ? cfBaseUrl.slice(0, -1) : cfBaseUrl
+        const cfResponse = await fetch(`${cfBaseUrl}/room/${roomId}`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'X-DO-Access-Key': doSecretKey,
+          },
+          body: JSON.stringify({
+            type: 'broadcast',
+            event: 'NEW_MESSAGE',
+            payload: aiMessage,
+          }),
+        })
+        if (!cfResponse.ok) {
+          throw new Error(`Cloudflare broadcast failed: ${await cfResponse.text()}`)
+        }
+      } else {
+        const channel = supabase.channel(`room:${roomId}`)
+        await channel.send({
+          type: 'broadcast',
+          event: 'NEW_MESSAGE',
+          payload: aiMessage,
+        })
+        await supabase.removeChannel(channel)
+      }
+    } catch (broadcastError) {
+      // The reply is already persisted — log, but don't fail the request.
+      console.error('AI broadcast error:', broadcastError)
+    }
 
     return new Response(JSON.stringify({ status: 'success' }), {
       status: 200,

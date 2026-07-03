@@ -914,6 +914,8 @@ CREATE POLICY "Admins and Mods can update rooms" ON public.chat_rooms FOR UPDATE
 
 CREATE POLICY "Allow public to view public rooms" ON public.chat_rooms FOR SELECT TO anon USING ((is_public = true));
 
+CREATE POLICY "Authenticated users can view joinable rooms" ON public.chat_rooms FOR SELECT TO authenticated USING (((allow_join_requests = true) AND (is_direct_message = false) AND (COALESCE(is_personal_vault, false) = false)));
+
 CREATE POLICY "Authenticated users can create rooms" ON public.chat_rooms FOR INSERT TO authenticated WITH CHECK ((auth.uid() IS NOT NULL));
 
 CREATE POLICY "Only Admins can delete rooms" ON public.chat_rooms FOR DELETE TO authenticated USING ((EXISTS ( SELECT 1 FROM public.room_participants WHERE ((room_participants.room_id = chat_rooms.id) AND (room_participants.user_id = auth.uid()) AND ((room_participants.role)::text = 'admin'::text)))));
@@ -939,6 +941,8 @@ CREATE POLICY "Admins and Mods can update participants" ON public.room_participa
 CREATE POLICY "Leave room or Admins/Mods can kick" ON public.room_participants FOR DELETE TO authenticated USING (((user_id = auth.uid()) OR (public.is_room_admin_or_mod(room_id) AND (((EXISTS ( SELECT 1 FROM public.room_participants rp_self WHERE ((rp_self.room_id = room_participants.room_id) AND (rp_self.user_id = auth.uid()) AND ((rp_self.role)::text = 'admin'::text)))) AND (user_id <> ( SELECT cr.created_by FROM public.chat_rooms cr WHERE (cr.id = room_participants.room_id)))) OR ((NOT (EXISTS ( SELECT 1 FROM public.room_participants rp_self WHERE ((rp_self.room_id = room_participants.room_id) AND (rp_self.user_id = auth.uid()) AND ((rp_self.role)::text = 'admin'::text))))) AND ((role)::text = 'member'::text))) AND (NOT (EXISTS ( SELECT 1 FROM public.governance_proposals gp WHERE ((gp.room_id = room_participants.room_id) AND (gp.nominee_user_id = room_participants.user_id) AND (gp.status = 'active'::text))))))));
 
 CREATE POLICY "Only Admins and Mods can add participants" ON public.room_participants FOR INSERT TO authenticated WITH CHECK (public.is_room_admin_or_mod(room_id));
+
+CREATE POLICY "Users can request to join joinable rooms" ON public.room_participants FOR INSERT TO authenticated WITH CHECK (((user_id = auth.uid()) AND (status = 'pending'::text) AND ((role)::text = 'member'::text) AND (EXISTS ( SELECT 1 FROM public.chat_rooms cr WHERE ((cr.id = room_participants.room_id) AND (cr.allow_join_requests = true) AND (cr.is_direct_message = false) AND (COALESCE(cr.is_personal_vault, false) = false))))));
 
 CREATE POLICY "View room participants" ON public.room_participants FOR SELECT TO authenticated USING ((public.is_room_admin_or_mod(room_id) OR ((status = 'active'::text) AND public.is_room_member(room_id)) OR (user_id = auth.uid())));
 
