@@ -50,7 +50,7 @@ Required only if you want your Silo's messages to trigger push notifications on 
 
 | Variable | Description |
 | :--- | :--- |
-| `HUB_URL` | The Normsar Hub's Supabase URL (defaults to the official Hub if unset by `authenticate-hub-user`; set it explicitly here). |
+| `HUB_URL` | The Normsar Hub's Supabase URL (defaults to the official Hub if unset by `authenticate-hub-user`; set it explicitly here). Use https://hub.normsar.io |
 | `HUB_SILO_API_KEY` | Your Silo's API key registered in the Hub Vault — the same key used for activity-log ingestion. Contact the Hub administrator or generate it from the Silo Manager. |
 ---
 
