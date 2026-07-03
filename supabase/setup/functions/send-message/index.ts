@@ -1,4 +1,65 @@
-import { createClient } from "npm:@supabase/supabase-js@2";
+import { createClient, type SupabaseClient } from "npm:@supabase/supabase-js@2";
+
+/*
+ * Relays a CONTENT-FREE push alert to the Normsar Hub after a new message.
+ * The Hub delivers Web Push to recipients' devices (see hub-push-relay);
+ * message content never leaves this Silo. No-op unless both optional
+ * secrets are configured:
+ *   HUB_URL           — e.g. https://<hub-project>.supabase.co
+ *   HUB_SILO_API_KEY  — this Silo's API key registered in the Hub Vault
+ *                       (the same key used for activity-log ingestion)
+ */
+async function relayPushToHub(
+  supabaseAdmin: SupabaseClient,
+  roomId: string,
+  senderId: string,
+  messagePayload: Record<string, unknown>,
+): Promise<void> {
+  try {
+    const hubUrl = Deno.env.get("HUB_URL");
+    const hubApiKey = Deno.env.get("HUB_SILO_API_KEY");
+    if (!hubUrl || !hubApiKey) return;
+
+    const { data: room } = await supabaseAdmin
+      .from("chat_rooms")
+      .select("is_direct_message, is_personal_vault")
+      .eq("id", roomId)
+      .maybeSingle();
+    if (!room || room.is_personal_vault) return;
+
+    const { data: participants } = await supabaseAdmin
+      .from("room_participants")
+      .select("user_id")
+      .eq("room_id", roomId)
+      .eq("status", "active")
+      .neq("user_id", senderId);
+    const recipientIds = (participants ?? []).map((p) => p.user_id);
+    if (recipientIds.length === 0) return;
+
+    const response = await fetch(
+      `${hubUrl.replace(/\/$/, "")}/functions/v1/hub-push-relay`,
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${hubApiKey}`,
+        },
+        body: JSON.stringify({
+          room_id: roomId,
+          recipient_ids: recipientIds,
+          mentioned_user_ids: messagePayload?.mentioned_users ?? [],
+          is_direct_message: Boolean(room.is_direct_message),
+        }),
+      },
+    );
+    if (!response.ok) {
+      console.error("[push-relay] Hub relay failed:", await response.text());
+    }
+  } catch (err) {
+    // Push relay must never break message delivery.
+    console.error("[push-relay] Error:", err);
+  }
+}
 
 Deno.serve(async (req: Request) => {
   // 1. CORS Configuration
@@ -126,7 +187,8 @@ Deno.serve(async (req: Request) => {
         broadcastData = { id: payload.message_id };
         break;
       }
-         case 'TOGGLE_PIN': {
+
+      case 'TOGGLE_PIN': {
         const { data, error } = await supabaseAdmin
           .from('chat_messages')
           .update({ is_pinned: payload.is_pinned })
@@ -164,6 +226,18 @@ Deno.serve(async (req: Request) => {
 
       default:
         throw new Error(`Unknown action type: ${action}`);
+    }
+
+    // 5.5 Fire-and-forget push relay to the Hub for new messages
+    if (action === "NEW_MESSAGE" && broadcastData) {
+      const relayTask = relayPushToHub(supabaseAdmin, room_id, userId, payload ?? {});
+      const runtime = (globalThis as { EdgeRuntime?: { waitUntil?: (p: Promise<unknown>) => void } })
+        .EdgeRuntime;
+      if (runtime?.waitUntil) {
+        runtime.waitUntil(relayTask);
+      } else {
+        await relayTask;
+      }
     }
 
     // 6. THE MAGIC: Dynamic Transport Routing

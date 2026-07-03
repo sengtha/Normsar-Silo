@@ -44,6 +44,14 @@ Required only if you are implementing E2EE using the Lit Protocol network.
 | :--- | :--- |
 | `LIT_PKP_PUBLIC_KEY` | The Programmable Key Pair (PKP) public key for Lit Protocol. |
 | `LIT_API_KEY` | Your developer API key for accessing Lit Protocol services. |
+
+### 🔔 Optional: Push Notifications (Hub Relay)
+Required only if you want your Silo's messages to trigger push notifications on members' devices. The Silo sends a **content-free** alert (recipient list + room id only — never message content) to the Normsar Hub, which delivers the Web Push. Recipients control everything from their Hub notification settings (opt-in, mentions-only mode, per-room mute).
+
+| Variable | Description |
+| :--- | :--- |
+| `HUB_URL` | The Normsar Hub's Supabase URL (defaults to the official Hub if unset by `authenticate-hub-user`; set it explicitly here). |
+| `HUB_SILO_API_KEY` | Your Silo's API key registered in the Hub Vault — the same key used for activity-log ingestion. Contact the Hub administrator or generate it from the Silo Manager. |
 ---
 
 ### 1. Configure Edge Function Secrets
