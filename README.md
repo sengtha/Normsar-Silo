@@ -71,6 +71,11 @@ Apply the core architecture, including AI vector support and governance logic.
 3. Copy the entire content of that SQL file.
 4. Paste it into the Supabase SQL Editor and click **Run**.
 
+> **Upgrading an existing Silo?** Fresh installs already include everything.
+> To add features to a Silo you deployed earlier, run the matching upgrade
+> script in `supabase/setup/schema/`: `Fix_room_join_requests.sql`
+> (request-to-join) and `Fix_room_read_states.sql` (sidebar unread badges).
+
 ### 3. Deploy Edge Functions
 Deploy the logic required for AI processing and system automation.
 1. Navigate to **Edge Functions** in your Supabase Dashboard.

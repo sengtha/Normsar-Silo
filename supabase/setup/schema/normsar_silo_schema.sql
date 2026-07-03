@@ -1116,3 +1116,49 @@ FOR DELETE USING (
   ((string_to_array(name, '/'::text))[1] = (auth.jwt() ->> 'sub'::text))
 );
 
+
+
+-- ─────────────────────────────────────────────────────────────────────────
+-- Per-room unread tracking (sidebar unread badges).
+-- See also Fix_room_read_states.sql for applying this to an existing Silo.
+-- ─────────────────────────────────────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS public.room_read_states (
+    user_id uuid NOT NULL REFERENCES public.profiles (id) ON DELETE CASCADE,
+    room_id uuid NOT NULL REFERENCES public.chat_rooms (id) ON DELETE CASCADE,
+    last_read_at timestamptz NOT NULL DEFAULT now(),
+    PRIMARY KEY (user_id, room_id)
+);
+
+CREATE INDEX IF NOT EXISTS chat_messages_room_created_idx
+    ON public.chat_messages (room_id, created_at);
+
+ALTER TABLE public.room_read_states ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY "Users manage own read states (select)" ON public.room_read_states
+    FOR SELECT TO authenticated USING (auth.uid() = user_id);
+CREATE POLICY "Users manage own read states (insert)" ON public.room_read_states
+    FOR INSERT TO authenticated WITH CHECK (auth.uid() = user_id);
+CREATE POLICY "Users manage own read states (update)" ON public.room_read_states
+    FOR UPDATE TO authenticated USING (auth.uid() = user_id) WITH CHECK (auth.uid() = user_id);
+
+CREATE OR REPLACE FUNCTION public.get_user_room_unread_counts(p_user_id uuid)
+RETURNS json
+LANGUAGE sql STABLE SECURITY DEFINER
+SET search_path TO 'public', 'pg_temp'
+AS $$
+  SELECT COALESCE(json_agg(json_build_object(
+           'room_id', room_id, 'parent_room_id', parent_room_id, 'unread_count', cnt)), '[]'::json)
+  FROM (
+    SELECT m.room_id, cr.parent_room_id, count(*)::int AS cnt
+    FROM public.chat_messages m
+    JOIN public.room_participants rp
+      ON rp.room_id = m.room_id AND rp.user_id = p_user_id AND rp.status = 'active'
+    JOIN public.chat_rooms cr ON cr.id = m.room_id
+    LEFT JOIN public.room_read_states rs
+      ON rs.room_id = m.room_id AND rs.user_id = p_user_id
+    WHERE m.user_id IS DISTINCT FROM p_user_id
+      AND (m.expires_at IS NULL OR m.expires_at > now())
+      AND m.created_at > COALESCE(rs.last_read_at, rp.joined_at)
+    GROUP BY m.room_id, cr.parent_room_id
+  ) t;
+$$;
