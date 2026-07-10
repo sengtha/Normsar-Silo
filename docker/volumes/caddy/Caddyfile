@@ -1,0 +1,27 @@
+# Normsar Silo — TLS termination + reverse proxy to the Kong API gateway.
+#
+# {$SILO_DOMAIN} is your public domain (e.g. silo.example.com). Caddy fetches
+# and renews a Let's Encrypt certificate for it automatically. Set it (and
+# CADDY_ACME_EMAIL) in .env. For a local trial, leave SILO_DOMAIN=localhost —
+# Caddy then serves its own internal self-signed cert on https://localhost.
+
+{
+	email {$CADDY_ACME_EMAIL}
+}
+
+{$SILO_DOMAIN} {
+	# Everything (REST, Auth, Realtime WebSockets, Storage, Edge Functions)
+	# is exposed through Kong on :8000. Caddy proxies the whole surface;
+	# Kong handles the per-route API-key/JWT auth as configured in kong.yml.
+	reverse_proxy kong:8000
+
+	# Realtime uses long-lived WebSocket connections — don't buffer them.
+	encode gzip
+
+	header {
+		# Basic hardening. HSTS is only meaningful once a real cert is in use.
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		X-Content-Type-Options "nosniff"
+		Referrer-Policy "strict-origin-when-cross-origin"
+	}
+}

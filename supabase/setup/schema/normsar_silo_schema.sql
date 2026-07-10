@@ -1099,22 +1099,44 @@ SELECT cron.schedule(
   $$
 );
 -- Storage
-INSERT INTO storage.buckets (id, name, public) VALUES ('silo_uploads', 'silo_uploads', true);
-CREATE POLICY "Valid token holders can view files" ON storage.objects 
-FOR SELECT USING (
-  (bucket_id = 'silo_uploads'::text) AND 
-  (((auth.jwt() ->> 'sub'::text))::uuid IS NOT NULL)
-);
-CREATE POLICY "Valid token holders can upload files" ON storage.objects 
-FOR INSERT WITH CHECK (
-  (bucket_id = 'silo_uploads'::text) AND 
-  (((auth.jwt() ->> 'sub'::text))::uuid IS NOT NULL)
-);
-CREATE POLICY "Users can delete their own files" ON storage.objects 
-FOR DELETE USING (
-  (bucket_id = 'silo_uploads'::text) AND 
-  ((string_to_array(name, '/'::text))[1] = (auth.jwt() ->> 'sub'::text))
-);
+-- Guarded + idempotent: on hosted Supabase the storage schema always exists,
+-- so this runs inline. On a fresh self-hosted stack the storage tables are
+-- created by the storage service at runtime (after db-init), so this block
+-- cleanly skips at init and is (re-)applied afterwards — see
+-- docker/volumes/db/normsar-storage.sql. DROP POLICY IF EXISTS also makes the
+-- whole schema safe to re-run.
+DO $$
+BEGIN
+  IF to_regclass('storage.objects') IS NULL THEN
+    RAISE NOTICE 'storage schema not ready; skipping bucket/policies (applied post-boot)';
+    RETURN;
+  END IF;
+
+  INSERT INTO storage.buckets (id, name, public)
+  VALUES ('silo_uploads', 'silo_uploads', true)
+  ON CONFLICT (id) DO NOTHING;
+
+  DROP POLICY IF EXISTS "Valid token holders can view files" ON storage.objects;
+  CREATE POLICY "Valid token holders can view files" ON storage.objects
+  FOR SELECT USING (
+    (bucket_id = 'silo_uploads'::text) AND
+    (((auth.jwt() ->> 'sub'::text))::uuid IS NOT NULL)
+  );
+
+  DROP POLICY IF EXISTS "Valid token holders can upload files" ON storage.objects;
+  CREATE POLICY "Valid token holders can upload files" ON storage.objects
+  FOR INSERT WITH CHECK (
+    (bucket_id = 'silo_uploads'::text) AND
+    (((auth.jwt() ->> 'sub'::text))::uuid IS NOT NULL)
+  );
+
+  DROP POLICY IF EXISTS "Users can delete their own files" ON storage.objects;
+  CREATE POLICY "Users can delete their own files" ON storage.objects
+  FOR DELETE USING (
+    (bucket_id = 'silo_uploads'::text) AND
+    ((string_to_array(name, '/'::text))[1] = (auth.jwt() ->> 'sub'::text))
+  );
+END $$;
 
 
 
