@@ -20,6 +20,15 @@ async function relayPushToHub(
     const hubApiKey = Deno.env.get("HUB_SILO_API_KEY");
     if (!hubUrl || !hubApiKey) return;
 
+    // Supabase's edge gateway requires a valid PROJECT api key on every
+    // function call (even with Verify JWT off). The Silo's own secret is not
+    // a project key, so it must ride in a separate header — the Hub
+    // publishable key satisfies the gateway. Mirrors authenticate-hub-user.
+    const hubPublishableKey =
+      Deno.env.get("HUB_PUBLISHABLE_KEY") ||
+      Deno.env.get("HUB_ANON_KEY") ||
+      "sb_publishable_yvy7GSQEldxhg_xD0l6F3g_x1st3Gjh";
+
     const { data: room } = await supabaseAdmin
       .from("chat_rooms")
       .select("is_direct_message, is_personal_vault")
@@ -42,7 +51,11 @@ async function relayPushToHub(
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          Authorization: `Bearer ${hubApiKey}`,
+          // Project key → passes the Supabase edge gateway.
+          apikey: hubPublishableKey,
+          Authorization: `Bearer ${hubPublishableKey}`,
+          // The Silo's own secret → verified by hub-push-relay against the Vault.
+          "x-silo-api-key": hubApiKey,
         },
         body: JSON.stringify({
           room_id: roomId,
