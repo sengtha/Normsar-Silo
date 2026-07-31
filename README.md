@@ -1,6 +1,27 @@
 # Normsar-Silo
 The self-hosted, decentralized data node for Normsar Sovereign Messaging. Deploy your own Silo to achieve true data sovereignty and connect securely to the Normsar Hub.
 
+## ⚡ Quick deploy from GitHub
+
+Stand up a complete Silo on **your own** Linux VM (Ubuntu/Debian, ≥ 4 GB RAM, a
+domain pointed at it, ports 80 + 443 open) — Docker, database, realtime,
+storage, edge functions, and automatic HTTPS, all from this repo:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/sengtha/Normsar-Silo/main/install.sh \
+  | sudo bash -s -- --domain silo.example.com --email you@example.com
+```
+
+Prefer to deploy from **your own fork** via GitHub Actions (fork → add SSH
+secrets → *Actions → Deploy Silo → Run workflow*), or a compose-native host
+like Coolify / Elestio? See **[docs/Deploy-from-GitHub.md](docs/Deploy-from-GitHub.md)**.
+
+> Your Silo is a sovereign environment: it runs on infrastructure you control,
+> with keys you hold and can revoke. Normsar never reaches into it — the Hub is
+> only a federation endpoint your Silo talks *out* to.
+
+The manual, step-by-step setup below is still available if you prefer full control.
+
 # 🚀 Silo Setup Guide
 
 Follow these steps to deploy and register your own sovereign messaging node.
