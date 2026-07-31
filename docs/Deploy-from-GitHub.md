@@ -28,7 +28,23 @@ That installs Docker, clones this repo to `/opt/normsar-silo`, generates all
 secrets, and brings the stack up behind automatic HTTPS. Re-run the same
 command any time to **update** in place.
 
-Optional feature keys can be passed as environment variables and are written
+### Auto-register (recommended)
+
+Add a **claim token** and the Silo registers itself with the Hub during install
+— no manual step, and a 1-month free trial starts automatically. Get the token
+from the Silo Manager (<https://normsar.io/silo-manager> → **“Deploy a Silo”**),
+which hands you the full command:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/sengtha/Normsar-Silo/main/install.sh \
+  | sudo NORMSAR_CLAIM_TOKEN=<your-token> bash -s -- \
+      --domain silo.example.com --email you@example.com
+```
+
+The installer writes the returned `HUB_SILO_API_KEY` (for push) and `HUB_URL`
+into `.env` for you. The token is single-use and expires in 7 days.
+
+Optional feature keys can also be passed as environment variables and are written
 into `.env` automatically:
 
 ```bash
@@ -51,6 +67,8 @@ server. Normsar is not involved.
    - `SSH_PRIVATE_KEY` — a private key authorized on that server
    - *(optional)* `GEMINI_API_KEY`, `HUB_URL`, `HUB_SILO_API_KEY`
 3. **Actions → Deploy Silo → Run workflow**, enter your **domain** and **email**.
+   To auto-register, paste a claim token (Silo Manager → **“Deploy a Silo”**)
+   into the **claim_token** input.
 
 The workflow SSHes into your server and runs `install.sh` from your fork. Run
 it again whenever you want to redeploy/update.
@@ -76,11 +94,15 @@ connect **your own** account and point it at this repo (or your fork):
 ## After it's up
 
 1. Watch it start: `cd /opt/normsar-silo/docker && docker compose logs -f`
-2. Register the Silo with the Hub in the **Silo Manager**
-   (<https://normsar.io/silo-manager>) using:
+2. **If you deployed with a claim token, you're done** — the Silo is already
+   registered (it appears as *Trialing* in the Silo Manager) and its push key is
+   set. Otherwise register it manually in the **Silo Manager**
+   (<https://normsar.io/silo-manager> → **Register existing**) using:
    - **Project URL:** `https://silo.example.com`
    - **Anon Key:** the `ANON_KEY` value in `/opt/normsar-silo/docker/.env`
-3. To enable push notifications, set `HUB_URL` + `HUB_SILO_API_KEY` (see
+3. Push notifications work out of the box on an auto-registered Silo. On a
+   manually registered one, reveal your `HUB_SILO_API_KEY` in the Silo Manager
+   (your Silo → *Reveal push key*) and set it plus `HUB_URL` (see
    [Push-Notifications setup](https://github.com/sengtha/Normsar/blob/main/docs/Push-Notifications.md)).
 
 ## Updating later
