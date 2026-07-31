@@ -20,7 +20,17 @@
 #   --repo   <o/r>    GitHub repo to install from (default: sengtha/Normsar-Silo).
 #   --branch <name>   Branch to install (default: main).
 #   --dir    <path>   Install directory (default: /opt/normsar-silo).
+#   --claim-token <t> One-time deploy token from the Silo Manager. When present the
+#                     Silo auto-registers with the Hub and its push key + trial are
+#                     set up during install — no manual registration needed.
 #   --force           Regenerate .env even if it already exists (rotates ALL secrets).
+#
+# Auto-registration (recommended): in the Silo Manager (https://normsar.io/silo-manager)
+# click "Deploy a Silo" to get a ready-made install command with --claim-token
+# baked in. After it runs, the Silo is already registered and usable — a 1-month
+# free trial starts automatically.
+#
+# The claim token may also be supplied as the NORMSAR_CLAIM_TOKEN env var.
 #
 # Optional feature keys may be supplied as environment variables and are written
 # into .env automatically: GEMINI_API_KEY, HUB_URL, HUB_SILO_API_KEY,
@@ -34,15 +44,22 @@ DIR="/opt/normsar-silo"
 DOMAIN=""
 EMAIL=""
 FORCE=""
+CLAIM_TOKEN="${NORMSAR_CLAIM_TOKEN:-}"
+# Where the Silo registers itself, and the gateway key to reach the Hub's
+# register-silo function. Both have working defaults for the official Hub and
+# can be overridden via env (HUB_URL / HUB_PUBLISHABLE_KEY).
+HUB_URL="${HUB_URL:-https://hub.normsar.io}"
+HUB_PUBLISHABLE_KEY="${HUB_PUBLISHABLE_KEY:-sb_publishable_yvy7GSQEldxhg_xD0l6F3g_x1st3Gjh}"
 
 while [ $# -gt 0 ]; do
   case "$1" in
-    --domain) DOMAIN="$2"; shift 2 ;;
-    --email)  EMAIL="$2";  shift 2 ;;
-    --repo)   REPO="$2";   shift 2 ;;
-    --branch) BRANCH="$2"; shift 2 ;;
-    --dir)    DIR="$2";    shift 2 ;;
-    --force)  FORCE="--force"; shift ;;
+    --domain)      DOMAIN="$2"; shift 2 ;;
+    --email)       EMAIL="$2";  shift 2 ;;
+    --repo)        REPO="$2";   shift 2 ;;
+    --branch)      BRANCH="$2"; shift 2 ;;
+    --dir)         DIR="$2";    shift 2 ;;
+    --claim-token) CLAIM_TOKEN="$2"; shift 2 ;;
+    --force)       FORCE="--force"; shift ;;
     -h|--help) grep '^#' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
     *) echo "Unknown argument: $1" >&2; exit 1 ;;
   esac
@@ -117,6 +134,48 @@ if [ -n "${GEMINI_API_KEY:-}${HUB_URL:-}${HUB_SILO_API_KEY:-}${HUB_PUBLISHABLE_K
   setenv LIT_PKP_PUBLIC_KEY   "${LIT_PKP_PUBLIC_KEY:-}"
 fi
 
+# --- 3b. Auto-register with the Hub --------------------------------------
+# With a claim token, the Silo registers ITSELF with the Hub: no manual trip to
+# the Silo Manager. The Hub records this Silo, mints its push key, and starts the
+# free trial. We do this BEFORE launch so the stack comes up already wired for
+# push. The Hub never reaches into the Silo — this is the Silo talking OUT.
+register_with_hub() {
+  [ -n "$CLAIM_TOKEN" ] || return 0
+
+  local anon_key
+  anon_key="$(grep -E '^ANON_KEY=' .env | head -1 | cut -d= -f2-)"
+  if [ -z "$anon_key" ]; then
+    log "Skipping auto-register: ANON_KEY not found in .env."
+    return 0
+  fi
+
+  log "Registering with the Hub at ${HUB_URL}…"
+  local url="https://${DOMAIN}" resp key
+  resp="$(curl -fsS -X POST "${HUB_URL}/functions/v1/register-silo" \
+      -H "Content-Type: application/json" \
+      -H "apikey: ${HUB_PUBLISHABLE_KEY}" \
+      -H "Authorization: Bearer ${HUB_PUBLISHABLE_KEY}" \
+      --data "$(printf '{"claim_token":"%s","url":"%s","anon_key":"%s","domain":"%s"}' \
+                "$CLAIM_TOKEN" "$url" "$anon_key" "$DOMAIN")" 2>/dev/null)" || {
+    log "Auto-register call failed (network or invalid token). You can still register"
+    log "manually in the Silo Manager. Continuing with the install…"
+    return 0
+  }
+
+  key="$(printf '%s' "$resp" | sed -n 's/.*"hub_silo_api_key":"\([^"]*\)".*/\1/p')"
+  if [ -z "$key" ]; then
+    log "Hub did not return a push key (response: ${resp}). Register manually if needed."
+    return 0
+  fi
+
+  setenv HUB_URL          "$HUB_URL"
+  setenv HUB_SILO_API_KEY "$key"
+  REGISTERED=1
+  log "Registered ✓ — push key stored and 1-month free trial started."
+}
+REGISTERED=0
+register_with_hub
+
 # --- 4. Launch ------------------------------------------------------------
 log "Starting the Silo (docker compose up -d)…"
 docker compose pull --quiet 2>/dev/null || true
@@ -130,5 +189,12 @@ echo
 echo "Next:"
 echo "  1. Point ${DOMAIN}'s DNS A record at this server and open ports 80 + 443."
 echo "  2. Watch it come up:   cd ${DIR}/docker && docker compose logs -f"
-echo "  3. Register the Silo with the Hub (Silo Manager) using your Project URL"
-echo "     (https://${DOMAIN}) and Anon Key (see ${DIR}/docker/.env: ANON_KEY)."
+if [ "$REGISTERED" = "1" ]; then
+  echo "  3. Already registered with the Hub ✓ — your Silo is on a 1-month free trial."
+  echo "     Manage it (status, push key) at https://normsar.io/silo-manager."
+else
+  echo "  3. Register the Silo with the Hub. Easiest path: open the Silo Manager"
+  echo "     (https://normsar.io/silo-manager) → \"Deploy a Silo\" to get a one-line"
+  echo "     install command with a claim token, or register manually with your"
+  echo "     Project URL (https://${DOMAIN}) and Anon Key (${DIR}/docker/.env: ANON_KEY)."
+fi

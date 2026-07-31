@@ -12,9 +12,32 @@ curl -fsSL https://raw.githubusercontent.com/sengtha/Normsar-Silo/main/install.s
   | sudo bash -s -- --domain silo.example.com --email you@example.com
 ```
 
+### ✅ Auto-register (use it right away)
+
+Skip the manual registration step entirely. In the **Silo Manager**
+(<https://normsar.io/silo-manager>) click **“Deploy a Silo”** to get a ready-made
+command with a one-time **claim token** baked in:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/sengtha/Normsar-Silo/main/install.sh \
+  | sudo NORMSAR_CLAIM_TOKEN=<your-token> bash -s -- \
+      --domain silo.example.com --email you@example.com
+```
+
+During install the Silo **registers itself** with the Hub, receives its push key
+(`HUB_SILO_API_KEY`, written to `.env` automatically), and starts a **1-month
+free trial** — no trip back to the Silo Manager. Your push key is always
+viewable later in the Silo Manager (per-Silo → *Reveal push key*).
+
+> **Trial lifecycle:** 1 month free → a 1-week grace window after it ends →
+> if still not upgraded, the Hub simply **unregisters** the Silo (drops its
+> federation record). Your Silo server keeps running on your own infrastructure
+> the whole time — the Hub never touches it — and you can re-register any time.
+
 Prefer to deploy from **your own fork** via GitHub Actions (fork → add SSH
-secrets → *Actions → Deploy Silo → Run workflow*), or a compose-native host
-like Coolify / Elestio? See **[docs/Deploy-from-GitHub.md](docs/Deploy-from-GitHub.md)**.
+secrets → *Actions → Deploy Silo → Run workflow*, paste the claim token into the
+`claim_token` input), or a compose-native host like Coolify / Elestio? See
+**[docs/Deploy-from-GitHub.md](docs/Deploy-from-GitHub.md)**.
 
 > Your Silo is a sovereign environment: it runs on infrastructure you control,
 > with keys you hold and can revoke. Normsar never reaches into it — the Hub is
@@ -72,7 +95,7 @@ Required only if you want your Silo's messages to trigger push notifications on 
 | Variable | Description |
 | :--- | :--- |
 | `HUB_URL` | The Normsar Hub's Supabase URL (defaults to the official Hub if unset by `authenticate-hub-user`; set it explicitly here). Use https://hub.normsar.io |
-| `HUB_SILO_API_KEY` | Your Silo's API key registered in the Hub Vault — the same key used for activity-log ingestion. Contact the Hub administrator or generate it from the Silo Manager. |
+| `HUB_SILO_API_KEY` | Your Silo's API key registered in the Hub Vault — the same key used for activity-log ingestion. **Auto-registered Silos get this automatically** (written to `.env` during install). Otherwise, reveal it any time in the Silo Manager (your Silo → *Reveal push key*). |
 ---
 
 ### 1. Configure Edge Function Secrets
@@ -107,8 +130,14 @@ Deploy the logic required for AI processing and system automation.
 Set **Verify JWT with legacy secret** to **OFF** for each function. 
 
 ### 4. Register your Silo
-Link your infrastructure to the Normsar ecosystem.
+
+**The easy way (recommended):** use auto-register — in the Silo Manager click
+**“Deploy a Silo”**, copy the command (it includes a claim token), and run it on
+your server. The Silo registers itself; there is nothing to fill in here.
+
+**Manual registration** (for a Silo you set up by hand):
 1. Go to [https://normsar.io/silo-manager](https://normsar.io/silo-manager) (Sign-in required).
-2. Obtain your **Project URL** and **Anon Key** from **Project Search** in your Supabase Dashboard.
-3. Input these credentials into the registration form.
-4. Click **Register** to finalize your sovereign node.
+2. Click **“Register existing”**.
+3. Obtain your **Project URL** and **Anon Key** from **Project Search** in your Supabase Dashboard.
+4. Input these credentials into the registration form.
+5. Click **Register** to finalize your sovereign node.

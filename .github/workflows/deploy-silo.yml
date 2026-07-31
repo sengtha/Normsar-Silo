@@ -12,6 +12,10 @@ name: Deploy Silo
 # Optional feature secrets (leave unset to skip):
 #   GEMINI_API_KEY, HUB_URL, HUB_SILO_API_KEY
 #
+# Auto-register: put your one-time deploy token (Silo Manager → "Deploy a Silo")
+# in the NORMSAR_CLAIM_TOKEN input below and the Silo registers itself with the
+# Hub during install — no manual step, and a 1-month free trial starts.
+#
 # Your server needs: a public IP, ports 80 + 443 open, and DNS for the domain
 # you enter below pointing at it. It runs install.sh from THIS fork.
 
@@ -24,6 +28,9 @@ on:
       email:
         description: "Email for Let's Encrypt certificate notices"
         required: true
+      claim_token:
+        description: "One-time deploy token from the Silo Manager (auto-registers the Silo). Optional."
+        required: false
 
 concurrency:
   group: deploy-silo
@@ -40,6 +47,7 @@ jobs:
           SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
           DOMAIN: ${{ inputs.domain }}
           EMAIL: ${{ inputs.email }}
+          CLAIM_TOKEN: ${{ inputs.claim_token }}
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           HUB_URL: ${{ secrets.HUB_URL }}
           HUB_SILO_API_KEY: ${{ secrets.HUB_SILO_API_KEY }}
@@ -60,6 +68,7 @@ jobs:
           ssh -i ~/.ssh/id_deploy -o StrictHostKeyChecking=accept-new "$SSH_USER@$SSH_HOST" \
             "curl -fsSL 'https://raw.githubusercontent.com/${REPO}/${BRANCH}/install.sh' -o /tmp/normsar-install.sh \
              && sudo GEMINI_API_KEY='${GEMINI_API_KEY}' HUB_URL='${HUB_URL}' HUB_SILO_API_KEY='${HUB_SILO_API_KEY}' \
+                  NORMSAR_CLAIM_TOKEN='${CLAIM_TOKEN}' \
                   bash /tmp/normsar-install.sh --domain '${DOMAIN}' --email '${EMAIL}' --repo '${REPO}' --branch '${BRANCH}'"
 
       - name: Summary
