@@ -81,7 +81,35 @@ Deploy the logic required for AI processing and system automation.
 
 Set **Verify JWT with legacy secret** to **OFF** for each function. 
 
-### 5. Register your Silo
+### 5. Raise the Storage upload limit (needed for audio & video)
+
+The schema creates the `silo_uploads` bucket with no per-bucket size limit, so
+your **project-wide** Storage limit is what actually caps an upload. On hosted
+Supabase this is a dashboard setting — the self-hosted `STORAGE_FILE_SIZE_LIMIT`
+env var does **not** exist here.
+
+1. Go to **Storage** → **Settings** (Storage Settings) in your Supabase Dashboard.
+2. Set **Upload file size limit** to the largest attachment you want to accept.
+3. Save.
+
+> ⚠️ **Free plan is hard-capped at 50 MB per file** and cannot be raised — that
+> ceiling is enforced by the plan, not the setting. 50 MB is fine for images,
+> documents and most mp3, but it rejects most real mp4 video. To accept larger
+> video you need **Pro or above**, which allows up to 500 GB per file.
+> See [Supabase file limits](https://supabase.com/docs/guides/storage/uploads/file-limits).
+
+To cap a single bucket below the project limit (the bucket value must be ≤ the
+global one), run in the SQL Editor:
+
+```sql
+UPDATE storage.buckets
+SET file_size_limit = 524288000   -- 500 MB, in bytes
+WHERE id = 'silo_uploads';
+```
+
+Leaving `file_size_limit` NULL — the default — simply inherits the project limit.
+
+### 6. Register your Silo
 Link your infrastructure to the Normsar ecosystem.
 1. Go to [https://normsar.io/silo-manager](https://normsar.io/silo-manager) (Sign-in required).
 2. Obtain your **Project URL** and **Anon Key** from **Project Search** in your Supabase Dashboard.
