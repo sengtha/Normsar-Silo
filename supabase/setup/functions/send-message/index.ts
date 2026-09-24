@@ -74,6 +74,35 @@ async function relayPushToHub(
   }
 }
 
+// Columns a client may set on a new message. Everything else is decided
+// here: room_id (the room whose membership was checked), user_id (the
+// caller), created_at (the database clock) and is_pinned (moderation).
+const MESSAGE_FIELDS = [
+  "id", "content", "attachments", "expires_at", "tags", "allow_forwarding",
+  "reply_to_message_id", "key_version", "metadata", "mentioned_users",
+] as const;
+
+function pickMessageFields(payload: Record<string, unknown>) {
+  const out: Record<string, unknown> = {};
+  for (const key of MESSAGE_FIELDS) if (key in payload) out[key] = payload[key];
+  return out;
+}
+
+// Same rule as the chat_messages UPDATE policies: the author, or an active
+// admin/moderator of the room — and the message must be in that room. This
+// function runs as the service role, so nothing else would enforce it.
+async function canModerate(admin: SupabaseClient, messageId: unknown, roomId: string, userId: string) {
+  if (typeof messageId !== "string") return false;
+  const { data: msg } = await admin
+    .from("chat_messages").select("user_id, room_id").eq("id", messageId).maybeSingle();
+  if (!msg || msg.room_id !== roomId) return false;
+  if (msg.user_id === userId) return true;
+  const { data: rp } = await admin
+    .from("room_participants").select("role")
+    .eq("room_id", roomId).eq("user_id", userId).eq("status", "active").maybeSingle();
+  return rp?.role === "admin" || rp?.role === "moderator";
+}
+
 Deno.serve(async (req: Request) => {
   // 1. CORS Configuration
   if (req.method === "OPTIONS") {
@@ -147,10 +176,11 @@ Deno.serve(async (req: Request) => {
       case 'NEW_MESSAGE': {
         const { data, error } = await supabaseAdmin
           .from("chat_messages")
-          .insert({ 
-            room_id: room_id, 
-            user_id: userId, 
-            ...payload // Spreads id, content, tags, attachments, metadata, etc.
+          .insert({
+            ...pickMessageFields(payload ?? {}),
+            // After the spread, so the payload can't override them.
+            room_id: room_id,
+            user_id: userId,
           })
           .select("*, profiles(full_name, avatar_url)")
           .single();
@@ -160,6 +190,11 @@ Deno.serve(async (req: Request) => {
       }
 
       case 'ADD_REACTION': {
+        // Only messages in the room whose membership was checked.
+        const { data: target } = await supabaseAdmin
+          .from('chat_messages').select('id').eq('id', payload.message_id).eq('room_id', room_id).maybeSingle();
+        if (!target) throw new Error('Message not found in this room');
+
         const { data, error } = await supabaseAdmin
           .from('message_reactions')
           .insert({ 
@@ -180,6 +215,7 @@ Deno.serve(async (req: Request) => {
           .from('chat_messages')
           .update({ content: payload.content, key_version: payload.key_version })
           .eq('id', payload.message_id)
+          .eq('room_id', room_id)
           .eq('user_id', userId)
           .select('*, profiles(full_name, avatar_url)')
           .single();
@@ -194,6 +230,7 @@ Deno.serve(async (req: Request) => {
           .from('chat_messages')
           .delete()
           .eq('id', payload.message_id)
+          .eq('room_id', room_id)
           .eq('user_id', userId);
         if (error) throw error;
         
@@ -202,10 +239,14 @@ Deno.serve(async (req: Request) => {
       }
 
       case 'TOGGLE_PIN': {
+        if (!(await canModerate(supabaseAdmin, payload.message_id, room_id, userId))) {
+          throw new Error('Only the author or a room admin/moderator can pin this message');
+        }
         const { data, error } = await supabaseAdmin
           .from('chat_messages')
           .update({ is_pinned: payload.is_pinned })
           .eq('id', payload.message_id)
+          .eq('room_id', room_id)
           .select('id, is_pinned')
           .single();
         if (error) throw error;
@@ -214,10 +255,14 @@ Deno.serve(async (req: Request) => {
       }
 
       case 'TOGGLE_FORWARDING': {
+        if (!(await canModerate(supabaseAdmin, payload.message_id, room_id, userId))) {
+          throw new Error('Only the author or a room admin/moderator can change forwarding');
+        }
         const { data, error } = await supabaseAdmin
           .from('chat_messages')
           .update({ allow_forwarding: payload.allow_forwarding })
           .eq('id', payload.message_id)
+          .eq('room_id', room_id)
           .select('id, allow_forwarding')
           .single();
         if (error) throw error;
@@ -243,7 +288,7 @@ Deno.serve(async (req: Request) => {
 
     // 5.5 Fire-and-forget push relay to the Hub for new messages
     if (action === "NEW_MESSAGE" && broadcastData) {
-      const relayTask = relayPushToHub(supabaseAdmin, room_id, userId, payload ?? {});
+      const relayTask = relayPushToHub(supabaseAdmin, room_id, userId, broadcastData as Record<string, unknown>);
       const runtime = (globalThis as { EdgeRuntime?: { waitUntil?: (p: Promise<unknown>) => void } })
         .EdgeRuntime;
       if (runtime?.waitUntil) {
