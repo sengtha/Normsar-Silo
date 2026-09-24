@@ -629,17 +629,30 @@ END;
 $$;
 
 
-CREATE FUNCTION public.get_unique_room_tags(p_room_id uuid) RETURNS TABLE(tag text)
-    LANGUAGE plpgsql SECURITY DEFINER
-    AS $$
-BEGIN
-  RETURN QUERY
-  SELECT DISTINCT unnest(tags) AS tag
-  FROM public.chat_messages
-  WHERE room_id = p_room_id 
-    AND tags IS NOT NULL 
-    AND array_length(tags, 1) > 0;
-END;
+-- Only for rooms whose messages you may read: public, or you are an active participant.
+create or replace function public.get_unique_room_tags(p_room_id uuid)
+returns table(tag text)
+language plpgsql
+security definer
+set search_path to 'public', 'pg_temp'
+as $$
+begin
+  -- Same rule as the chat_messages read policy: a public room, or one you're
+  -- an active participant in. Any other room returns no tags.
+  if not exists (select 1 from public.chat_rooms r where r.id = p_room_id and r.is_public = true)
+     and not exists (select 1 from public.room_participants rp
+                     where rp.room_id = p_room_id and rp.user_id = auth.uid() and rp.status = 'active')
+  then
+    return;
+  end if;
+
+  return query
+  select distinct unnest(m.tags) as tag
+  from public.chat_messages m
+  where m.room_id = p_room_id
+    and m.tags is not null
+    and array_length(m.tags, 1) > 0;
+end;
 $$;
 
 
@@ -814,6 +827,13 @@ BEGIN
   LIMIT match_count;
 END;
 $$;
+
+-- Returns document text for any room without checking the caller, so it must
+-- stay service-role only (its caller is the normsar-ai edge function).
+REVOKE EXECUTE ON FUNCTION public.match_doc_segments(public.vector, double precision, integer, uuid) FROM PUBLIC;
+REVOKE EXECUTE ON FUNCTION public.match_doc_segments(public.vector, double precision, integer, uuid) FROM anon;
+REVOKE EXECUTE ON FUNCTION public.match_doc_segments(public.vector, double precision, integer, uuid) FROM authenticated;
+GRANT EXECUTE ON FUNCTION public.match_doc_segments(public.vector, double precision, integer, uuid) TO service_role;
 
 
 CREATE FUNCTION public.update_chat_room_timestamp() RETURNS trigger
@@ -1178,7 +1198,8 @@ AS $$
     JOIN public.chat_rooms cr ON cr.id = m.room_id
     LEFT JOIN public.room_read_states rs
       ON rs.room_id = m.room_id AND rs.user_id = p_user_id
-    WHERE m.user_id IS DISTINCT FROM p_user_id
+    WHERE p_user_id = auth.uid()                 -- only your own counts
+      AND m.user_id IS DISTINCT FROM p_user_id
       AND (m.expires_at IS NULL OR m.expires_at > now())
       AND m.created_at > COALESCE(rs.last_read_at, rp.joined_at)
     GROUP BY m.room_id, cr.parent_room_id

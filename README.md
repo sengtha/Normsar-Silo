@@ -119,6 +119,12 @@ Apply the core architecture, including AI vector support and governance logic.
 > To add features to a Silo you deployed earlier, run the matching upgrade
 > script in `supabase/setup/schema/`: `Fix_room_join_requests.sql`
 > (request-to-join) and `Fix_room_read_states.sql` (sidebar unread badges).
+>
+> **Security fix — every existing Silo should run `Fix_rpc_caller_checks.sql`.**
+> Without it, anyone holding your Silo's public anon key can read the text of
+> documents fed to Normsar AI in any room whose id they know — private rooms
+> included — and any member can see which rooms another member belongs to.
+> It is safe to run on any Silo, including one that skipped the scripts above.
 
 ### 3. Deploy Edge Functions
 Deploy the logic required for AI processing and system automation.
