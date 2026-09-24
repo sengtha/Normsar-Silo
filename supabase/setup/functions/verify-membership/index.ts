@@ -49,7 +49,34 @@ serve(async (req) => {
       auth: { persistSession: false }
     })
 
-    // 3. Query the room_participants table securely
+    // 3. Bind the token to user_id. Checking only that the token is a valid
+    // Normsar Google token let any signed-in Google user claim to be any
+    // member (user_id is caller-supplied) and unlock that room's key. Every
+    // sign-in to this Silo stores the member's Hub email on their profile;
+    // the token's verified Google email must be that email.
+    const tokenEmail = typeof tokenData.email === 'string' ? tokenData.email.trim().toLowerCase() : ''
+    const emailVerified = tokenData.email_verified === true || tokenData.email_verified === 'true'
+    if (!tokenEmail || !emailVerified) {
+      throw new Error('Unauthorized: Token carries no verified email')
+    }
+
+    const { data: profile, error: profileError } = await supabaseAdmin
+      .from('profiles')
+      .select('email')
+      .eq('id', user_id)
+      .maybeSingle()
+
+    if (profileError) {
+      throw new Error(`Database error: ${profileError.message}`)
+    }
+    if (!profile?.email || profile.email.trim().toLowerCase() !== tokenEmail) {
+      return new Response(
+        JSON.stringify({ isMember: false, error: 'Token does not belong to this user' }),
+        { headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 403 }
+      )
+    }
+
+    // 4. Query the room_participants table securely
     const { data, error } = await supabaseAdmin
       .from('room_participants')
       .select('room_id')
@@ -61,7 +88,7 @@ serve(async (req) => {
       throw new Error(`Database error: ${error.message}`)
     }
 
-    // 4. Return the definitive boolean answer
+    // 5. Return the definitive boolean answer
     const isMember = data && data.length > 0
 
     return new Response(
