@@ -541,6 +541,7 @@ services:
       - ../supabase/setup/schema/Fix_room_join_requests.sql:/docker-entrypoint-initdb.d/migrations/99-normsar-02-join-requests.sql:Z
       - ../supabase/setup/schema/Fix_room_read_states.sql:/docker-entrypoint-initdb.d/migrations/99-normsar-03-read-states.sql:Z
       - ../supabase/setup/schema/Fix_rpc_caller_checks.sql:/docker-entrypoint-initdb.d/migrations/99-normsar-04-rpc-caller-checks.sql:Z
+      - ../supabase/setup/schema/Fix_room_access_checks.sql:/docker-entrypoint-initdb.d/migrations/99-normsar-05-room-access-checks.sql:Z
       # Use named volume to persist pgsodium decryption key between restarts
       - db-config:/etc/postgresql-custom
     healthcheck:
