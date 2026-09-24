@@ -499,6 +499,39 @@ end;
 $$;
 
 
+CREATE FUNCTION private.guard_chat_message_update()
+returns trigger
+language plpgsql
+set search_path to ''
+as $$
+declare
+  -- Columns someone other than the author may change: moderation (pin,
+  -- forwarding, task tags), plus the FK actions that null out
+  -- reply_to_message_id (a replied-to message deleted) and user_id (the
+  -- author's profile deleted).
+  moderation text[] := array['is_pinned', 'allow_forwarding', 'tags', 'reply_to_message_id', 'user_id'];
+begin
+  if new.room_id is distinct from old.room_id then
+    raise exception 'A message cannot be moved to another room' using errcode = '42501';
+  end if;
+  if new.user_id is distinct from old.user_id and new.user_id is not null then
+    raise exception 'A message''s author cannot be changed' using errcode = '42501';
+  end if;
+
+  -- Signed-in callers editing someone else's message (admins/moderators; the
+  -- service role has no auth.uid() and is checked by its edge functions).
+  if auth.uid() is not null and old.user_id is distinct from auth.uid() then
+    if (to_jsonb(new) - moderation) is distinct from (to_jsonb(old) - moderation)
+       or (new.reply_to_message_id is distinct from old.reply_to_message_id
+           and new.reply_to_message_id is not null) then
+      raise exception 'Only the author can edit a message' using errcode = '42501';
+    end if;
+  end if;
+  return new;
+end;
+$$;
+
+
 CREATE FUNCTION private.handle_new_room_admin() RETURNS trigger
     LANGUAGE plpgsql SECURITY DEFINER
     SET search_path TO 'pg_catalog', 'public'
@@ -594,6 +627,24 @@ CREATE FUNCTION public.is_room_admin_or_mod(_room_id uuid) RETURNS boolean
   );
 $$;
 
+
+CREATE FUNCTION public.is_room_admin(_room_id uuid)
+returns boolean
+language plpgsql
+stable security definer
+set search_path to 'public'
+as $$
+begin
+  return exists (
+    select 1 from public.room_participants rp
+    where rp.room_id = _room_id
+      and rp.user_id = auth.uid()
+      and rp.status = 'active'
+      and rp.role = 'admin'
+  );
+end;
+$$;
+
 CREATE FUNCTION public._is_admin_or_moderator_of_room(p_room_id uuid) RETURNS boolean
     LANGUAGE sql STABLE
     AS $$
@@ -629,17 +680,30 @@ END;
 $$;
 
 
-CREATE FUNCTION public.get_unique_room_tags(p_room_id uuid) RETURNS TABLE(tag text)
-    LANGUAGE plpgsql SECURITY DEFINER
-    AS $$
-BEGIN
-  RETURN QUERY
-  SELECT DISTINCT unnest(tags) AS tag
-  FROM public.chat_messages
-  WHERE room_id = p_room_id 
-    AND tags IS NOT NULL 
-    AND array_length(tags, 1) > 0;
-END;
+-- Only for rooms whose messages you may read: public, or you are an active participant.
+create or replace function public.get_unique_room_tags(p_room_id uuid)
+returns table(tag text)
+language plpgsql
+security definer
+set search_path to 'public', 'pg_temp'
+as $$
+begin
+  -- Same rule as the chat_messages read policy: a public room, or one you're
+  -- an active participant in. Any other room returns no tags.
+  if not exists (select 1 from public.chat_rooms r where r.id = p_room_id and r.is_public = true)
+     and not exists (select 1 from public.room_participants rp
+                     where rp.room_id = p_room_id and rp.user_id = auth.uid() and rp.status = 'active')
+  then
+    return;
+  end if;
+
+  return query
+  select distinct unnest(m.tags) as tag
+  from public.chat_messages m
+  where m.room_id = p_room_id
+    and m.tags is not null
+    and array_length(m.tags, 1) > 0;
+end;
 $$;
 
 
@@ -815,6 +879,13 @@ BEGIN
 END;
 $$;
 
+-- Returns document text for any room without checking the caller, so it must
+-- stay service-role only (its caller is the normsar-ai edge function).
+REVOKE EXECUTE ON FUNCTION public.match_doc_segments(public.vector, double precision, integer, uuid) FROM PUBLIC;
+REVOKE EXECUTE ON FUNCTION public.match_doc_segments(public.vector, double precision, integer, uuid) FROM anon;
+REVOKE EXECUTE ON FUNCTION public.match_doc_segments(public.vector, double precision, integer, uuid) FROM authenticated;
+GRANT EXECUTE ON FUNCTION public.match_doc_segments(public.vector, double precision, integer, uuid) TO service_role;
+
 
 CREATE FUNCTION public.update_chat_room_timestamp() RETURNS trigger
     LANGUAGE plpgsql
@@ -855,6 +926,11 @@ CREATE TRIGGER trigger_log_new_message
 CREATE TRIGGER trigger_update_room_timestamp 
   AFTER INSERT ON public.chat_messages 
   FOR EACH ROW EXECUTE FUNCTION public.update_chat_room_timestamp();
+
+-- Keeps room_id/user_id fixed and limits edits of others' messages to moderation
+CREATE TRIGGER guard_chat_message_update
+  BEFORE UPDATE ON public.chat_messages
+  FOR EACH ROW EXECUTE FUNCTION private.guard_chat_message_update();
 
 -- room_participants
 -- Ensures only Admins/Mods can alter participant statuses/roles safely
@@ -910,33 +986,35 @@ using (
   )
 );
 
-CREATE POLICY "Admins and Mods can update rooms" ON public.chat_rooms FOR UPDATE TO authenticated USING ((EXISTS ( SELECT 1 FROM public.room_participants WHERE ((room_participants.room_id = chat_rooms.id) AND (room_participants.user_id = auth.uid()) AND ((room_participants.role)::text = ANY ((ARRAY['admin'::character varying, 'moderator'::character varying])::text[]))))));
+CREATE POLICY "Admins and Mods can update rooms" ON public.chat_rooms FOR UPDATE TO authenticated USING (public.is_room_admin_or_mod(id));
 
 CREATE POLICY "Allow public to view public rooms" ON public.chat_rooms FOR SELECT TO anon USING ((is_public = true));
 
 CREATE POLICY "Authenticated users can view joinable rooms" ON public.chat_rooms FOR SELECT TO authenticated USING (((allow_join_requests = true) AND (is_direct_message = false) AND (COALESCE(is_personal_vault, false) = false)));
 
+CREATE POLICY "Authenticated users can view public rooms" ON public.chat_rooms FOR SELECT TO authenticated USING ((is_public = true));
+
 CREATE POLICY "Authenticated users can create rooms" ON public.chat_rooms FOR INSERT TO authenticated WITH CHECK ((auth.uid() IS NOT NULL));
 
-CREATE POLICY "Only Admins can delete rooms" ON public.chat_rooms FOR DELETE TO authenticated USING ((EXISTS ( SELECT 1 FROM public.room_participants WHERE ((room_participants.room_id = chat_rooms.id) AND (room_participants.user_id = auth.uid()) AND ((room_participants.role)::text = 'admin'::text)))));
+CREATE POLICY "Only Admins can delete rooms" ON public.chat_rooms FOR DELETE TO authenticated USING (public.is_room_admin(id));
 
 CREATE POLICY chat_rooms_select_stable ON public.chat_rooms FOR SELECT TO authenticated USING (((created_by = ( SELECT auth.uid() AS uid)) OR (EXISTS ( SELECT 1 FROM public.room_participants WHERE ((room_participants.room_id = chat_rooms.id) AND (room_participants.user_id = ( SELECT auth.uid() AS uid)) AND (room_participants.status = 'active'::text))))));
 
 -- chat_messages
-CREATE POLICY "Allow admins and mods to pin messages" ON public.chat_messages FOR UPDATE TO authenticated USING ((EXISTS ( SELECT 1 FROM public.room_participants WHERE ((room_participants.room_id = chat_messages.room_id) AND (room_participants.user_id = auth.uid()) AND ((room_participants.role)::text = ANY ((ARRAY['admin'::character varying, 'moderator'::character varying])::text[]))))));
+CREATE POLICY "Allow admins and mods to pin messages" ON public.chat_messages FOR UPDATE TO authenticated USING (public.is_room_admin_or_mod(room_id)) WITH CHECK (public.is_room_admin_or_mod(room_id));
 
 CREATE POLICY "Allow public to view messages in public rooms" ON public.chat_messages FOR SELECT TO anon USING ((EXISTS ( SELECT 1 FROM public.chat_rooms WHERE ((chat_rooms.id = chat_messages.room_id) AND (chat_rooms.is_public = true)))));
 
 CREATE POLICY "Authors can edit their own messages" ON public.chat_messages FOR UPDATE TO authenticated USING ((user_id = auth.uid())) WITH CHECK ((user_id = auth.uid()));
 
-CREATE POLICY "Authors or Admins/Mods can delete messages" ON public.chat_messages FOR DELETE TO authenticated USING (((user_id = auth.uid()) OR (EXISTS ( SELECT 1 FROM public.room_participants WHERE ((room_participants.room_id = chat_messages.room_id) AND (room_participants.user_id = auth.uid()) AND ((room_participants.role)::text = ANY ((ARRAY['admin'::character varying, 'moderator'::character varying])::text[])))))));
+CREATE POLICY "Authors or Admins/Mods can delete messages" ON public.chat_messages FOR DELETE TO authenticated USING (((user_id = auth.uid()) OR public.is_room_admin_or_mod(room_id)));
 
-CREATE POLICY "Messages viewable by participants or if public" ON public.chat_messages FOR SELECT TO authenticated USING (((EXISTS ( SELECT 1 FROM public.chat_rooms WHERE ((chat_rooms.id = chat_messages.room_id) AND (chat_rooms.is_public = true)))) OR (EXISTS ( SELECT 1 FROM public.room_participants WHERE ((room_participants.room_id = chat_messages.room_id) AND (room_participants.user_id = auth.uid()))))));
+CREATE POLICY "Messages viewable by participants or if public" ON public.chat_messages FOR SELECT TO authenticated USING (((EXISTS ( SELECT 1 FROM public.chat_rooms WHERE ((chat_rooms.id = chat_messages.room_id) AND (chat_rooms.is_public = true)))) OR (EXISTS ( SELECT 1 FROM public.room_participants WHERE ((room_participants.room_id = chat_messages.room_id) AND (room_participants.user_id = auth.uid()) AND (room_participants.status = 'active'::text))))));
 
-CREATE POLICY "Only participants can send messages" ON public.chat_messages FOR INSERT TO authenticated WITH CHECK ((EXISTS ( SELECT 1 FROM public.room_participants WHERE ((room_participants.room_id = chat_messages.room_id) AND (room_participants.user_id = auth.uid())))));
+CREATE POLICY "Only participants can send messages" ON public.chat_messages FOR INSERT TO authenticated WITH CHECK ((EXISTS ( SELECT 1 FROM public.room_participants WHERE ((room_participants.room_id = chat_messages.room_id) AND (room_participants.user_id = auth.uid()) AND (room_participants.status = 'active'::text)))));
 
 --room_participants
-CREATE POLICY "Admins and Mods can update participants" ON public.room_participants FOR UPDATE TO authenticated USING ((EXISTS ( SELECT 1 FROM public.room_participants rp WHERE ((rp.room_id = room_participants.room_id) AND (rp.user_id = auth.uid()) AND ((rp.role)::text = ANY ((ARRAY['admin'::character varying, 'moderator'::character varying])::text[]))))));
+CREATE POLICY "Admins and Mods can update participants" ON public.room_participants FOR UPDATE TO authenticated USING (public.is_room_admin_or_mod(room_id));
 
 CREATE POLICY "Leave room or Admins/Mods can kick" ON public.room_participants FOR DELETE TO authenticated USING (((user_id = auth.uid()) OR (public.is_room_admin_or_mod(room_id) AND (((EXISTS ( SELECT 1 FROM public.room_participants rp_self WHERE ((rp_self.room_id = room_participants.room_id) AND (rp_self.user_id = auth.uid()) AND ((rp_self.role)::text = 'admin'::text)))) AND (user_id <> ( SELECT cr.created_by FROM public.chat_rooms cr WHERE (cr.id = room_participants.room_id)))) OR ((NOT (EXISTS ( SELECT 1 FROM public.room_participants rp_self WHERE ((rp_self.room_id = room_participants.room_id) AND (rp_self.user_id = auth.uid()) AND ((rp_self.role)::text = 'admin'::text))))) AND ((role)::text = 'member'::text))) AND (NOT (EXISTS ( SELECT 1 FROM public.governance_proposals gp WHERE ((gp.room_id = room_participants.room_id) AND (gp.nominee_user_id = room_participants.user_id) AND (gp.status = 'active'::text))))))));
 
@@ -1178,7 +1256,8 @@ AS $$
     JOIN public.chat_rooms cr ON cr.id = m.room_id
     LEFT JOIN public.room_read_states rs
       ON rs.room_id = m.room_id AND rs.user_id = p_user_id
-    WHERE m.user_id IS DISTINCT FROM p_user_id
+    WHERE p_user_id = auth.uid()                 -- only your own counts
+      AND m.user_id IS DISTINCT FROM p_user_id
       AND (m.expires_at IS NULL OR m.expires_at > now())
       AND m.created_at > COALESCE(rs.last_read_at, rp.joined_at)
     GROUP BY m.room_id, cr.parent_room_id

@@ -6,6 +6,38 @@ const corsHeaders = {
   'Access-Control-Allow-Methods': 'POST, OPTIONS',
 }
 
+// The caller must be an active participant of the room. Silo sessions are
+// JWTs minted by authenticate-hub-user with no auth.users row, so
+// auth.getUser() can't check them; PostgREST verifies the signature, so a
+// membership query made with the caller's token doubles as verification.
+// Returns the caller's user id, or null.
+async function authorizeRoomMember(req: Request, roomId: unknown): Promise<string | null> {
+  if (typeof roomId !== 'string' || !roomId) return null
+  const authHeader = req.headers.get('Authorization') ?? ''
+  const token = authHeader.replace(/^Bearer\s+/i, '').trim()
+  let sub: unknown
+  try {
+    sub = JSON.parse(atob(token.split('.')[1].replace(/-/g, '+').replace(/_/g, '/'))).sub
+  } catch {
+    return null
+  }
+  if (typeof sub !== 'string' || !sub) return null
+
+  const userClient = createClient(
+    Deno.env.get('SUPABASE_URL') ?? '',
+    Deno.env.get('SUPABASE_ANON_KEY') ?? '',
+    { global: { headers: { Authorization: `Bearer ${token}` } } },
+  )
+  const { data, error } = await userClient
+    .from('room_participants')
+    .select('room_id')
+    .eq('room_id', roomId)
+    .eq('user_id', sub)
+    .eq('status', 'active')
+    .maybeSingle()
+  return !error && data ? sub : null
+}
+
 // The fixed ID we created in SQL for the AI
 const NORMSAR_AI_USER_ID = '00000000-0000-0000-0000-000000000000'
 
@@ -22,6 +54,15 @@ Deno.serve(async (req: Request) => {
     // 2. Add an early validation check
     if (!roomId) {
       throw new Error("Missing 'roomId' in request body.")
+    }
+
+    // Only a member of the room may ask. This runs as the service role and
+    // posts into the room, drawing on that room's documents.
+    if (!(await authorizeRoomMember(req, roomId))) {
+      return new Response(JSON.stringify({ error: 'Not a member of this room' }), {
+        status: 403,
+        headers: corsHeaders,
+      })
     }
     
     const supabaseUrl = Deno.env.get('SUPABASE_URL')

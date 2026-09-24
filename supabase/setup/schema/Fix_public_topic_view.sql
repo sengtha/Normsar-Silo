@@ -1,3 +1,7 @@
+-- Lets members of a parent room see its non-private sub-topics. Safe to
+-- re-run: normsar_silo_schema.sql already contains this policy, and the
+-- docker init runs this script after it, so it must not fail if it exists.
+drop policy if exists "Authenticated users can view non-private child rooms via parent membership" on public.chat_rooms;
 create policy "Authenticated users can view non-private child rooms via parent membership"
 on public.chat_rooms
 for select
